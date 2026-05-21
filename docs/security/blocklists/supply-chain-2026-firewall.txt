@@ -1,0 +1,3 @@
+# Firewall/IP blocklist for supply-chain 2026 campaigns
+# Note: hosts files cannot block raw IPs.
+142.11.206.73

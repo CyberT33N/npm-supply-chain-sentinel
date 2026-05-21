@@ -1,0 +1,39 @@
+{
+  "name": "npm-supply-chain-sentinel",
+  "version": "0.1.0",
+  "description": "Cross-platform Node.js scanner for detecting documented npm supply-chain compromises, persistence artifacts, malicious install hooks, and campaign IOCs across projects or entire hosts.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "npm-supply-chain-sentinel": "./src/cli/scan-supply-chain-campaigns.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "scan": "node ./src/cli/scan-supply-chain-campaigns.mjs",
+    "scan:project": "node ./src/cli/scan-supply-chain-campaigns.mjs",
+    "scan:project:verbose": "node ./src/cli/scan-supply-chain-campaigns.mjs",
+    "scan:machine-wide": "node ./src/cli/scan-supply-chain-campaigns.mjs --machine-wide",
+    "scan:machine-wide:verbose": "node ./src/cli/scan-supply-chain-campaigns.mjs --machine-wide",
+    "scan:no-home": "node ./src/cli/scan-supply-chain-campaigns.mjs --no-home",
+    "scan:blocklists": "node ./src/cli/scan-supply-chain-campaigns.mjs --write-blocklists ./docs/security/blocklists",
+    "scan:json": "node ./src/cli/scan-supply-chain-campaigns.mjs --json ./docs/security/latest-scan.json",
+    "scan:apply-hosts": "node ./src/cli/scan-supply-chain-campaigns.mjs --apply-hosts",
+    "scan:apply-firewall": "node ./src/cli/scan-supply-chain-campaigns.mjs --apply-firewall",
+    "scan:machine-wide:full": "node ./src/cli/scan-supply-chain-campaigns.mjs --machine-wide --apply-hosts --apply-firewall",
+    "scan:machine-wide:full:heartbeat-5s": "node ./src/cli/scan-supply-chain-campaigns.mjs --machine-wide --heartbeat-sec 5 --apply-hosts --apply-firewall",
+    "scan:machine-wide:fast-preflight": "node ./src/cli/scan-supply-chain-campaigns.mjs --machine-wide --fast-preflight",
+    "scan:quiet": "node ./src/cli/scan-supply-chain-campaigns.mjs --quiet",
+    "scan:help": "node ./src/cli/scan-supply-chain-campaigns.mjs --help"
+  },
+  "keywords": [
+    "security",
+    "supply-chain",
+    "npm",
+    "nodejs",
+    "incident-response",
+    "threat-hunting",
+    "ioc"
+  ]
+}
