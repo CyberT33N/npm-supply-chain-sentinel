@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 
 import { addFinding, createFindingsContainer, summarizeFindings } from '../domain/findings.mjs';
@@ -16,9 +15,7 @@ import {
   applyFirewallRules,
   applyHostsFile,
   auditHostsFile,
-  auditTrashState,
   defaultHostsPath,
-  emptyTrash,
   writeBlocklists,
 } from '../infrastructure/remediation.mjs';
 import { ensureRipgrepInstalled } from '../infrastructure/ripgrep.mjs';
@@ -31,6 +28,7 @@ import {
   inspectWindowsRegistry,
   runWorkerPool,
 } from './scanner.mjs';
+import { auditPnpmGovernance, inspectPnpmRuntime } from './pnpm-governance.mjs';
 import {
   PREFLIGHT_MODE_DEEP,
   PREFLIGHT_MODE_FAST,
@@ -67,6 +65,7 @@ export async function main() {
     process.exitCode = 2;
     return;
   }
+  const pnpmRuntime = inspectPnpmRuntime();
 
   const findings = createFindingsContainer();
   logStageIfVerbose(stageLogger, args, 'preflight-started', 'Resolving scan scope and runtime dependencies');
@@ -82,9 +81,8 @@ export async function main() {
     ),
   ];
   args.roots = normalizedRoots;
-  const trashStatus = await maybeHandleTrashBeforePreflight(args, stageLogger, findings);
 
-  const tasks = buildScanTasks(normalizedRoots, args.mode, findings);
+  const tasks = buildScanTasks(normalizedRoots, args.mode, findings, { includeTrash: args.includeTrash });
   const preflightPlan = await buildPreflightPlan(
     tasks,
     { mode: args.preflight, heartbeatMs: args.heartbeatMs },
@@ -117,6 +115,15 @@ export async function main() {
   logStageIfVerbose(stageLogger, args, 'registry-audit-started', 'Inspecting platform-specific registry/runtime persistence');
   inspectWindowsRegistry(findings);
   logStageIfVerbose(stageLogger, args, 'registry-audit-complete', 'Finished inspecting platform-specific registry/runtime persistence');
+
+  logStageIfVerbose(stageLogger, args, 'pnpm-governance-started', 'Auditing managed project roots for PNPM 11 Fortress governance');
+  const governanceAudit = auditPnpmGovernance(normalizedRoots, args, pnpmRuntime);
+  logStageIfVerbose(
+    stageLogger,
+    args,
+    'pnpm-governance-complete',
+    `Managed projects=${governanceAudit.summary.projectCount} pnpm_projects=${governanceAudit.summary.pnpmProjectCount} passed=${governanceAudit.summary.passCount} failed=${governanceAudit.summary.failCount} warnings=${governanceAudit.summary.warningCount}`,
+  );
 
   let blocklistPaths = null;
   if (args.writeBlocklistsDir) {
@@ -181,7 +188,7 @@ export async function main() {
   }
 
   logStageIfVerbose(stageLogger, args, 'summary-started', 'Rendering final summary and optional JSON payload');
-  renderSummary(findings, args, blocklistPaths, scanStats, workersUsed, hostsAudit, firewallAudit, preflightPlan, ripgrepVersion, trashStatus);
+  renderSummary(findings, args, blocklistPaths, scanStats, workersUsed, hostsAudit, firewallAudit, preflightPlan, ripgrepVersion, governanceAudit);
 
   const payload = toSerializableResult(
     findings,
@@ -193,7 +200,7 @@ export async function main() {
     firewallAudit,
     preflightPlan,
     ripgrepVersion,
-    trashStatus,
+    governanceAudit,
   );
   if (args.jsonPath) {
     try {
@@ -206,15 +213,16 @@ export async function main() {
   }
 
   const summary = summarizeFindings(findings);
+  const governanceFailures = governanceAudit?.summary?.failCount ?? 0;
   process.exitCode =
-    summary.exactCount > 0 || summary.heuristicCount > 0 || summary.artifactCount > 0
+    summary.exactCount > 0 || summary.heuristicCount > 0 || summary.artifactCount > 0 || governanceFailures > 0
       ? 1
       : 0;
   logStageIfVerbose(
     stageLogger,
     args,
     'summary-complete',
-    `Process finished with exact=${summary.exactCount} heuristic=${summary.heuristicCount} artifact=${summary.artifactCount} errors=${summary.errorCount}`,
+    `Process finished with exact=${summary.exactCount} heuristic=${summary.heuristicCount} artifact=${summary.artifactCount} limitations=${summary.limitationCount} errors=${summary.errorCount}`,
   );
 }
 
@@ -235,12 +243,12 @@ Options:
   --apply-hosts              Apply a managed blocklist section to the local hosts file.
   --apply-firewall           Apply outbound firewall block rules for the documented IOC IPs.
   --hosts-path <path>        Override the hosts file path used by --apply-hosts.
-  --empty-trash              Empty the OS trash/recycle bin before preflight with a native OS command.
+  --include-trash            Include the OS trash/recycle bin in scans when encountered.
+  --include-recycle-bin      Alias for --include-trash.
   --fast-preflight           Disable the default deep preflight and use the lighter task-based mode.
   --deep-preflight           Explicitly enable deep preflight (default).
   --heartbeat-sec <seconds>  Emit periodic heartbeat logs while long phases are running.
   --no-heartbeat             Disable periodic heartbeat logs.
-  --no-trash-prompt          Disable the interactive prompt to empty the OS trash/recycle bin.
   --quiet                    Disable detailed progress and process logs.
   --verbose                  Alias to re-enable detailed logs.
   --help                     Show this help.
@@ -250,13 +258,14 @@ Notes:
   - --machine-wide scans all accessible local filesystem roots instead of only the project.
   - Worker threads shard subtrees, while each rg process runs with --threads 1 to avoid
     over-parallelizing the host.
+  - Scans exclude the OS trash / recycle bin by default. Use --include-trash
+    (or --include-recycle-bin) only when you explicitly want that additional forensic scope.
   - Deep preflight is enabled by default. Use --fast-preflight to disable the metadata-only
     inventory pass and fall back to the lighter task-based mode.
-  - Interactive machine-wide runs can offer to empty the OS trash/recycle bin before preflight.
-    Use --empty-trash to do this without a prompt, or --no-trash-prompt to suppress the prompt.
   - Heartbeats are enabled by default. Use --no-heartbeat to disable them. Default interval:
     10 seconds. Override with --heartbeat-sec.
   - ripgrep (rg) must be installed and available on PATH.
+  - Managed project roots are also audited for PNPM 11 Fortress governance outside package-manager-managed areas such as node_modules, .pnpm, .pnpm-store, .yarn, .bun, jspm_packages, and bower_components.
   - Exact package/version hits are high confidence.
   - Heuristic hits look for the documented loader/payload/persistence patterns from the
     Axios incident and the Shai-Hulud / Mini-Shai-Hulud campaign family.
@@ -277,10 +286,9 @@ function parseArgs(argv) {
     applyHosts: false,
     applyFirewall: false,
     hostsPath: null,
-    emptyTrash: false,
+    includeTrash: false,
     preflight: PREFLIGHT_MODE_DEEP,
     heartbeatMs: 10_000,
-    trashPrompt: true,
     verbose: true,
   };
 
@@ -361,11 +369,6 @@ function parseArgs(argv) {
       continue;
     }
 
-    if (token === '--empty-trash') {
-      args.emptyTrash = true;
-      continue;
-    }
-
     if (token === '--fast-preflight') {
       args.preflight = PREFLIGHT_MODE_FAST;
       continue;
@@ -402,8 +405,8 @@ function parseArgs(argv) {
       continue;
     }
 
-    if (token === '--no-trash-prompt') {
-      args.trashPrompt = false;
+    if (token === '--include-trash' || token === '--include-recycle-bin') {
+      args.includeTrash = true;
       continue;
     }
 
@@ -428,7 +431,6 @@ function parseArgs(argv) {
   if (args.mode === SCAN_MODE_MACHINE && args.roots.length > 0) {
     throw new Error('--machine-wide cannot be combined with --root');
   }
-
   return args;
 }
 
@@ -439,119 +441,6 @@ function writeJsonReport(jsonPath, payload) {
     return;
   }
   fs.writeFileSync(jsonPath, text, 'utf8');
-}
-
-async function maybeHandleTrashBeforePreflight(args, stageLogger, findings) {
-  const shouldAuditTrash = args.emptyTrash || args.mode === SCAN_MODE_MACHINE;
-  if (!shouldAuditTrash) {
-    return null;
-  }
-
-  logStageIfVerbose(stageLogger, args, 'trash-audit-started', 'Inspecting native trash/recycle bin state before preflight');
-  const status = {
-    before: auditTrashState(),
-    promptOffered: false,
-    userChoice: 'not-asked',
-    action: null,
-    after: null,
-  };
-  logStageIfVerbose(stageLogger, args, 'trash-audit-complete', buildTrashAuditDetail(status.before));
-
-  const canPrompt = args.mode === SCAN_MODE_MACHINE && args.trashPrompt && isInteractivePromptAvailable();
-  const shouldOfferPrompt = canPrompt && status.before.available && status.before.supported && status.before.hasItems === true && !args.emptyTrash;
-
-  if (shouldOfferPrompt) {
-    status.promptOffered = true;
-    const accepted = await promptYesNo(buildTrashPrompt(status.before), false);
-    status.userChoice = accepted ? 'accepted' : 'declined';
-    if (!accepted) {
-      logStageIfVerbose(stageLogger, args, 'trash-empty-skipped', 'User declined native trash/recycle bin cleanup before preflight');
-      return status;
-    }
-  }
-
-  if (!args.emptyTrash && status.userChoice !== 'accepted') {
-    return status;
-  }
-
-  if (status.before.hasItems === false) {
-    logStageIfVerbose(stageLogger, args, 'trash-empty-skipped', 'Native trash/recycle bin cleanup was requested, but no items were detected');
-    return status;
-  }
-
-  logStageIfVerbose(stageLogger, args, 'trash-empty-started', `Attempting native trash/recycle bin cleanup via ${status.before.provider}`);
-  status.userChoice = args.emptyTrash ? 'automatic' : status.userChoice;
-  status.action = emptyTrash();
-  status.after = auditTrashState();
-
-  if (status.action?.succeeded && status.after?.hasItems === true) {
-    status.action.warnings.push('Trash/recycle bin still reports items after the native empty command completed.');
-  }
-
-  if (!status.action?.succeeded) {
-    const failureMessage = status.action?.error || 'Native trash/recycle bin cleanup failed.';
-    addFinding(findings.errors, {
-      type: 'trash-remediation-error',
-      path: status.action?.provider ?? process.platform,
-      message: failureMessage,
-    });
-  }
-
-  logStageIfVerbose(
-    stageLogger,
-    args,
-    status.action?.succeeded ? 'trash-empty-complete' : 'trash-empty-failed',
-    buildTrashActionDetail(status.action, status.after),
-  );
-
-  return status;
-}
-
-function isInteractivePromptAvailable() {
-  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
-}
-
-function buildTrashPrompt(trashAudit) {
-  const itemLabel = Number.isInteger(trashAudit.itemCount)
-    ? `${trashAudit.itemCount} item(s)`
-    : 'items';
-  return `Preflight detected ${itemLabel} in the OS trash/recycle bin. Empty it now with the native ${trashAudit.provider} command before the scan? [y/N] `;
-}
-
-async function promptYesNo(question, defaultValue = false) {
-  const prompt = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  try {
-    const answer = (await prompt.question(question)).trim().toLowerCase();
-    if (!answer) {
-      return defaultValue;
-    }
-    return ['y', 'yes', 'j', 'ja'].includes(answer);
-  } finally {
-    prompt.close();
-  }
-}
-
-function buildTrashAuditDetail(trashAudit) {
-  const itemCount = Number.isInteger(trashAudit.itemCount) ? trashAudit.itemCount : 'unknown';
-  const hasItems = trashAudit.hasItems == null ? 'unknown' : trashAudit.hasItems;
-  const command = trashAudit.command ?? 'n/a';
-  const error = trashAudit.error ? ` error=${trashAudit.error}` : '';
-  return `provider=${trashAudit.provider} supported=${trashAudit.supported} available=${trashAudit.available} has_items=${hasItems} item_count=${itemCount} command=${command}${error}`;
-}
-
-function buildTrashActionDetail(trashAction, trashAuditAfter) {
-  if (!trashAction) {
-    return 'No native trash/recycle bin action was attempted.';
-  }
-  const afterItems = trashAuditAfter?.hasItems == null ? 'unknown' : trashAuditAfter.hasItems;
-  const warningText = trashAction.warnings.length > 0
-    ? ` warnings=${trashAction.warnings.join(' | ')}`
-    : '';
-  const errorText = trashAction.error ? ` error=${trashAction.error}` : '';
-  return `provider=${trashAction.provider} attempted=${trashAction.attempted} succeeded=${trashAction.succeeded} after_has_items=${afterItems}${warningText}${errorText}`;
 }
 
 function createStageLogger() {

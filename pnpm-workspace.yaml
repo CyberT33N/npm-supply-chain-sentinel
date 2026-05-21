@@ -1,0 +1,59 @@
+minimumReleaseAge: 10080
+minimumReleaseAgeIgnoreMissingTime: false
+minimumReleaseAgeStrict: true
+minimumReleaseAgeExclude: []
+trustPolicy: no-downgrade
+trustPolicyExclude: []
+blockExoticSubdeps: true
+strictDepBuilds: true
+allowBuilds: {}
+dangerouslyAllowAllBuilds: false
+
+registries:
+  default: https://registry.npmjs.org/
+strictSsl: true
+
+nodeVersion: 24.16.0
+engineStrict: true
+pmOnFail: error
+runtimeOnFail: error
+
+lockfile: true
+preferFrozenLockfile: true
+lockfileIncludeTarballUrl: true
+resolutionMode: time-based
+registrySupportsTimeField: false
+
+nodeLinker: isolated
+enableGlobalVirtualStore: false
+hoist: false
+hoistPattern: []
+publicHoistPattern: []
+shamefullyHoist: false
+virtualStoreDir: .pnpm
+virtualStoreDirMaxLength: 60
+verifyStoreIntegrity: true
+strictStorePkgContentCheck: true
+
+autoInstallPeers: false
+strictPeerDependencies: true
+peerDependencyRules:
+  ignoreMissing: []
+  allowedVersions: {}
+  allowAny: []
+
+overrides: {}
+packageExtensions: {}
+allowedDeprecatedVersions: {}
+ignoreCompatibilityDb: true
+updateNotifier: false
+
+catalog:
+  minimatch: 10.2.5
+  semver: 7.8.0
+  yaml: 2.9.0
+catalogMode: strict
+cleanupUnusedCatalogs: true
+
+enablePrePostScripts: false
+verifyDepsBeforeRun: error

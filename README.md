@@ -6,10 +6,17 @@ Cross-platform Node.js scanner and threat-intelligence repository for detecting 
 
 `npm-supply-chain-sentinel` requires the following runtime dependencies:
 
-- Node.js `>=20`
+- Node.js `>=24.16.0`
+- `pnpm` `11.1.3`
 - `ripgrep` (`rg`) on `PATH`
 
 `ripgrep` is a required runtime dependency for the scanner and must be installed before running the CLI.
+
+The repository itself is governed as a PNPM 11 Fortress single-project setup:
+
+- project policy lives in `pnpm-workspace.yaml`,
+- toolchain pinning lives in the root `package.json`,
+- project-local `.npmrc` / `auth.ini` are optional auth-only files and must stay gitignored.
 
 Typical installation commands:
 
@@ -38,6 +45,7 @@ The project combines:
 
 - a curated IOC and campaign dataset,
 - a cross-platform filesystem and package scanner,
+- a PNPM 11 Fortress governance audit for managed project roots,
 - project-mode and machine-wide scan modes,
 - worker-thread-based parallel traversal,
 - a required `ripgrep`-backed runtime environment,
@@ -50,8 +58,16 @@ This repository is intentionally split by responsibility:
 
 - `src/cli`
   The delivery layer. This is the executable scanner entrypoint and orchestration boundary.
+- `src/application`
+  The application layer. This contains CLI orchestration, preflight planning, worker scheduling, the filesystem/package scan flow, and PNPM governance auditing.
+- `src/domain`
+  The policy and findings layer. This contains scan modes, skip rules, PNPM Fortress policy constants, reporting symbols, and finding aggregation primitives derived from the curated dataset.
+- `src/infrastructure`
+  The infrastructure adapter layer. This contains filesystem helpers, process helpers, native remediation adapters, and the `ripgrep` runtime integration.
 - `src/data`
   The curated threat-intelligence and detection-policy layer. This is the canonical source of campaign metadata, exact package-version rules, IOC lists, and heuristic signatures.
+- `src/presentation`
+  The reporting layer. This renders human-readable summaries and serializable result payloads.
 - `docs/security`
   The read-model and operational documentation layer. This contains the detailed campaign report and generated blocklist artifacts.
 
@@ -80,17 +96,44 @@ Administrative mutation is intentionally isolated to explicit remediation operat
 src/
   cli/
     scan-supply-chain-campaigns.mjs
+  application/
+    cli.mjs
+    pnpm-governance.mjs
+    preflight.mjs
+    scan-worker.mjs
+    scanner.mjs
+  domain/
+    findings.mjs
+    pnpm-governance.mjs
+    policy.mjs
   data/
     supply-chain-campaigns-2026.mjs
+  infrastructure/
+    fs-utils.mjs
+    process-utils.mjs
+    remediation.mjs
+    ripgrep.mjs
+  presentation/
+    reporting.mjs
 docs/
   security/
     supply-chain-campaigns-2026.md
     blocklists/
       supply-chain-2026.hosts
       supply-chain-2026-firewall.txt
+.gitignore
+package.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
 ```
 
 ## Usage
+
+Install the pinned package-manager/runtime contract first:
+
+```bash
+pnpm install
+```
 
 ### Direct Node.js execution
 
@@ -124,6 +167,12 @@ Machine-wide scan with a 5-second heartbeat:
 node src/cli/scan-supply-chain-campaigns.mjs --machine-wide --heartbeat-sec 5
 ```
 
+Machine-wide scan with explicit recycle-bin coverage:
+
+```bash
+node src/cli/scan-supply-chain-campaigns.mjs --machine-wide --include-trash
+```
+
 Write blocklists:
 
 ```bash
@@ -148,19 +197,19 @@ Complete machine-wide scan plus hosts/firewall remediation:
 node src/cli/scan-supply-chain-campaigns.mjs --machine-wide --apply-hosts --apply-firewall
 ```
 
-Equivalent npm script (uses the default deep preflight):
+Equivalent pnpm script (uses the default deep preflight):
 
 ```bash
-npm run scan:machine-wide:full
+pnpm run scan:machine-wide:full
 ```
 
-Equivalent npm script with a 5-second heartbeat:
+Equivalent pnpm script with a 5-second heartbeat:
 
 ```bash
-npm run scan:machine-wide:full:heartbeat-5s
+pnpm run scan:machine-wide:full:heartbeat-5s
 ```
 
-Interactive machine-wide runs can offer to empty the native OS trash / recycle bin before preflight when items are detected there.
+Machine-wide scans exclude the OS trash / recycle bin by default. Add `--include-trash` only when you explicitly want that extra forensic scope.
 
 ## Operator quick start
 
@@ -191,10 +240,10 @@ Direct CLI command:
 node src/cli/scan-supply-chain-campaigns.mjs --machine-wide --apply-hosts --apply-firewall
 ```
 
-Equivalent npm script:
+Equivalent pnpm script:
 
 ```bash
-npm run scan:machine-wide:full
+pnpm run scan:machine-wide:full
 ```
 
 Deep preflight is enabled by default. If you want a lighter startup and less pre-scan work:
@@ -203,10 +252,10 @@ Deep preflight is enabled by default. If you want a lighter startup and less pre
 node src/cli/scan-supply-chain-campaigns.mjs --machine-wide --fast-preflight --apply-hosts --apply-firewall
 ```
 
-If you want to empty the native OS trash / recycle bin before preflight without an interactive prompt:
+If you want to include the OS trash / recycle bin in a machine-wide scan:
 
 ```bash
-node src/cli/scan-supply-chain-campaigns.mjs --machine-wide --empty-trash --apply-hosts --apply-firewall
+node src/cli/scan-supply-chain-campaigns.mjs --machine-wide --include-trash --apply-hosts --apply-firewall
 ```
 
 Heartbeat logs are enabled by default. If you want a shorter heartbeat interval:
@@ -222,7 +271,7 @@ For a normal detection-only scan, a regular terminal is sufficient.
 For `--apply-hosts`, `--apply-firewall`, or the full remediation package, open **PowerShell as Administrator** and then run:
 
 ```powershell
-npm run scan:machine-wide:full
+pnpm run scan:machine-wide:full
 ```
 
 Or, without npm:
@@ -257,36 +306,36 @@ sudo node ./src/cli/scan-supply-chain-campaigns.mjs --machine-wide --apply-hosts
 
 macOS firewall remediation currently targets `pfctl`.
 
-### npm scripts
+### pnpm scripts
 
-The repository exposes ready-to-run npm scripts:
+The repository exposes ready-to-run pnpm scripts:
 
-- `npm run scan`
-- `npm run scan:project`
-- `npm run scan:project:verbose`
-- `npm run scan:machine-wide`
-- `npm run scan:machine-wide:verbose`
-- `npm run scan:no-home`
-- `npm run scan:blocklists`
-- `npm run scan:json`
-- `npm run scan:apply-firewall`
-- `npm run scan:machine-wide:full`
-- `npm run scan:machine-wide:full:heartbeat-5s`
-- `npm run scan:machine-wide:fast-preflight`
-- `npm run scan:quiet`
-- `npm run scan:help`
+- `pnpm run scan`
+- `pnpm run scan:project`
+- `pnpm run scan:project:verbose`
+- `pnpm run scan:machine-wide`
+- `pnpm run scan:machine-wide:verbose`
+- `pnpm run scan:no-home`
+- `pnpm run scan:blocklists`
+- `pnpm run scan:json`
+- `pnpm run scan:apply-firewall`
+- `pnpm run scan:machine-wide:full`
+- `pnpm run scan:machine-wide:full:heartbeat-5s`
+- `pnpm run scan:machine-wide:fast-preflight`
+- `pnpm run scan:quiet`
+- `pnpm run scan:help`
 
 For custom flags such as `--root`, `--workers`, `--hosts-path`, or a custom JSON output path, forward arguments after `--`:
 
 ```bash
-npm run scan -- --root ../repo-a --workers 8 --json ./docs/security/custom-scan.json
+pnpm run scan -- --root ../repo-a --workers 8 --json ./docs/security/custom-scan.json
 ```
 
-You can also forward trash-handling flags this way:
+You can also forward explicit recycle-bin scan flags this way:
 
 ```bash
-npm run scan:machine-wide:full -- --empty-trash
-npm run scan:machine-wide:full -- --no-trash-prompt
+pnpm run scan:machine-wide -- --include-trash
+pnpm run scan:machine-wide:full -- --include-recycle-bin
 ```
 
 ## Hosts and firewall remediation
@@ -346,21 +395,27 @@ Example:
 node src/cli/scan-supply-chain-campaigns.mjs --machine-wide
 ```
 
-## Trash / recycle bin handling
+## Recycle bin scanning
 
-Before interactive machine-wide scans, the CLI can inspect the native OS trash / recycle bin and offer to empty it before preflight starts.
+The scanner excludes the OS trash / recycle bin by default.
 
-- Windows: `Clear-RecycleBin -Force`
-- macOS: `osascript -e 'tell application "Finder" to empty the trash'`
-- Ubuntu/Linux: `gio trash --empty` when available, with `gvfs-trash --empty` as a distro-provided fallback when present
-- No `rm -rf` fallback is used
+This is intentional:
 
-Behavior:
+- the default machine-wide mode is optimized for active project and host coverage,
+- the recycle bin is primarily forensic scope rather than active supply-chain scope,
+- automatically emptying the recycle bin would destroy the very evidence an explicit forensic scan might want to inspect.
+- even when explicitly enabled, recycle-bin scans skip the expensive recursive installed-package crawl under `node_modules` and keep the lighter project-file / payload-oriented coverage.
 
-- Interactive machine-wide runs may show a yes/no prompt when trash items are detected.
-- `--empty-trash` skips the prompt and attempts native cleanup immediately before preflight.
-- `--no-trash-prompt` suppresses the interactive prompt.
-- If no supported native command is available on Linux, the scan continues without trash cleanup.
+If you explicitly want recycle-bin coverage, pass one of these flags:
+
+- `--include-trash`
+- `--include-recycle-bin`
+
+Example:
+
+```bash
+node src/cli/scan-supply-chain-campaigns.mjs --machine-wide --include-trash
+```
 
 ## Heartbeat logs
 
@@ -377,7 +432,7 @@ Example:
 node src/cli/scan-supply-chain-campaigns.mjs --machine-wide --heartbeat-sec 5
 ```
 
-The heartbeat is especially useful when a few heavy areas such as `C:\\Users`, `C:\\Projects`, `C:\\git`, or `$Recycle.Bin` dominate the remaining work.
+The heartbeat is especially useful when a few heavy areas such as `C:\\Users`, `C:\\Projects`, `C:\\git`, or, when explicitly enabled, `$Recycle.Bin` dominate the remaining work.
 
 Example:
 
@@ -402,9 +457,29 @@ When `--machine-wide` is set:
 - the scanner switches from project scope to host scope,
 - all accessible local filesystem roots become scan roots,
 - top-level subtrees are distributed across worker threads,
+- the OS trash / recycle bin is excluded by default unless `--include-trash` is set,
 - `node_modules`, suspicious payload files, persistence artifacts, and IOC-bearing files are searched across the full host scope.
 
 `--machine-wide` and `--root` are intentionally mutually exclusive.
+
+## PNPM governance audit
+
+In addition to IOC- and persistence-detection, the scanner now performs a dedicated PNPM 11 Fortress governance audit on managed project roots.
+
+The governance pass:
+
+- discovers managed project roots recursively,
+- excludes package-manager-managed areas such as `node_modules`, `.pnpm`, `.pnpm-store`, `.npm`, `.yarn`, `.bun`, `_cacache`, `_npx`, `jspm_packages`, and `bower_components`,
+- classifies PNPM roots as `pnpm-single-project` or `pnpm-monorepo`,
+- validates `pnpm-workspace.yaml`, the root `package.json`, and project-local `.npmrc` / `auth.ini`,
+- checks for PNPM 11 pinning, Node.js LTS floor alignment, lockfile presence, build-script governance, trust policy, and workspace protocol usage,
+- reports every discovered managed project with its path, status, and missing or invalid Fortress requirements.
+
+Important scope rule:
+
+- the governance audit is intentionally root-focused and does **not** treat package-manager-managed directories as user-controlled projects,
+- the malware/IOC scan still inspects installed dependencies where appropriate,
+- the governance audit and the IOC scan therefore cover different architectural surfaces on purpose.
 
 ## Documentation
 

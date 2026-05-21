@@ -80,7 +80,7 @@ export function enumerateMachineRoots() {
   return roots;
 }
 
-export function buildScanTasks(roots, mode, findings) {
+export function buildScanTasks(roots, mode, findings, options = {}) {
   const tasks = [];
   let nextTaskId = 1;
 
@@ -93,12 +93,22 @@ export function buildScanTasks(roots, mode, findings) {
       });
       continue;
     }
+    if (!options.includeTrash && isRecycleBinPath(rootPath)) {
+      addFinding(findings.limitations, {
+        type: 'skipped-trash-directory',
+        path: normalizeForDisplay(rootPath),
+        rule: 'explicit-trash-scan-required',
+        message: `Skipped ${normalizeForDisplay(rootPath)}: OS trash/recycle bin scanning is disabled by default. Use --include-trash to scan this area explicitly.`,
+      });
+      continue;
+    }
 
     tasks.push({
       id: nextTaskId,
       rootPath,
       mode,
       shallow: true,
+      includeTrash: Boolean(options.includeTrash),
     });
     nextTaskId += 1;
 
@@ -106,6 +116,9 @@ export function buildScanTasks(roots, mode, findings) {
     try {
       entries = fs.readdirSync(rootPath, { withFileTypes: true });
     } catch (error) {
+      if (isPermissionDeniedError(error)) {
+        continue;
+      }
       addFinding(findings.errors, {
         type: 'root-read-error',
         path: normalizeForDisplay(rootPath),
@@ -116,13 +129,22 @@ export function buildScanTasks(roots, mode, findings) {
 
     for (const entry of entries) {
       const fullPath = path.join(rootPath, entry.name);
+      if (mode === SCAN_MODE_MACHINE && isDirectoryEntryLink(entry, fullPath)) {
+        addFinding(findings.limitations, {
+          type: 'skipped-alias-directory',
+          path: normalizeForDisplay(fullPath),
+          rule: 'symbolic-link-or-junction',
+          message: `Skipped ${normalizeForDisplay(fullPath)}: directory is a symbolic link or junction alias and is not scanned as an independent tree.`,
+        });
+        continue;
+      }
       if (!direntIsDirectory(entry, fullPath)) {
         continue;
       }
       if (entry.name === 'node_modules') {
         continue;
       }
-      if (shouldSkipDirectory(entry.name, mode)) {
+      if (shouldSkipDirectory(entry.name, mode, { includeTrash: options.includeTrash })) {
         continue;
       }
       tasks.push({
@@ -130,6 +152,7 @@ export function buildScanTasks(roots, mode, findings) {
         rootPath: fullPath,
         mode,
         shallow: false,
+        includeTrash: Boolean(options.includeTrash),
       });
       nextTaskId += 1;
     }
@@ -222,14 +245,41 @@ export function runScanTask(task, reportProgress = () => {}) {
     startedAt: taskStartedAt,
   });
 
+  if (isDirectoryLinkPath(task.rootPath)) {
+    addFinding(findings.limitations, {
+      type: 'skipped-alias-directory',
+      path: normalizeForDisplay(task.rootPath),
+      rule: 'symbolic-link-or-junction',
+      message: `Skipped ${normalizeForDisplay(task.rootPath)}: directory is a symbolic link or junction alias and is not scanned as an independent tree.`,
+    });
+
+    reportTaskProgress(reportProgress, task, 'task-complete', {
+      elapsedMs: Date.now() - taskStartedAt,
+      directoriesVisited: stats.directoriesVisited,
+      candidateFilesVisited: stats.candidateFilesVisited,
+      nodeModulesDirsVisited: stats.nodeModulesDirsVisited,
+      candidateFilesDiscovered: 0,
+      nodeModulesRootsDiscovered: 0,
+      installedPackagesScanned: 0,
+    });
+
+    return {
+      task,
+      findings,
+      stats,
+    };
+  }
+
   const discoveryStartedAt = Date.now();
   const { candidateFiles, nodeModulesDirs } = discoverScanTargets(
     task.rootPath,
     {
       mode: task.mode,
       shallow: task.shallow,
+      includeTrash: task.includeTrash,
     },
     stats,
+    findings,
   );
   reportTaskProgress(reportProgress, task, 'discovery-complete', {
     elapsedMs: Date.now() - discoveryStartedAt,
@@ -252,22 +302,33 @@ export function runScanTask(task, reportProgress = () => {}) {
     candidateFilesConsidered: candidateFiles.length,
   });
   const projectRgStartedAt = Date.now();
-  const projectRgStats = applyProjectRipgrepResults(task, findings);
+  const projectRgStats = applyProjectRipgrepResults(task, candidateFiles, findings);
   reportTaskProgress(reportProgress, task, 'project-rg-complete', {
     elapsedMs: Date.now() - projectRgStartedAt,
     matchedFiles: projectRgStats.matchedFiles,
   });
 
+  const shouldRunNodeModulesSemantic = !isRecycleBinPath(task.rootPath);
+  if (!shouldRunNodeModulesSemantic && nodeModulesDirs.length > 0) {
+    addFinding(findings.limitations, {
+      type: 'limited-trash-node-modules-scan',
+      path: normalizeForDisplay(task.rootPath),
+      rule: 'recycle-bin-node-modules-disabled',
+      message: `Limited ${normalizeForDisplay(task.rootPath)}: recycle-bin scans skip recursive installed-package traversal under node_modules and keep only the lighter project-file and payload-oriented coverage.`,
+    });
+  }
   reportTaskProgress(reportProgress, task, 'node-modules-semantic-started', {
     nodeModulesRootsDiscovered: nodeModulesDirs.length,
   });
   const nodeModulesSemanticStartedAt = Date.now();
   let installedPackagesScanned = 0;
   let nodeModulesRipgrepMatchedFiles = 0;
-  for (const nodeModulesDir of nodeModulesDirs) {
-    const packageDirToName = scanInstalledPackagesSemantic(nodeModulesDir, findings, stats);
-    installedPackagesScanned += packageDirToName.size;
-    nodeModulesRipgrepMatchedFiles += applyNodeModulesRipgrepResults(nodeModulesDir, packageDirToName, findings).matchedFiles;
+  if (shouldRunNodeModulesSemantic) {
+    for (const nodeModulesDir of nodeModulesDirs) {
+      const packageDirToName = scanInstalledPackagesSemantic(nodeModulesDir, findings, stats);
+      installedPackagesScanned += packageDirToName.size;
+      nodeModulesRipgrepMatchedFiles += applyNodeModulesRipgrepResults(nodeModulesDir, packageDirToName, findings).matchedFiles;
+    }
   }
   reportTaskProgress(reportProgress, task, 'node-modules-complete', {
     elapsedMs: Date.now() - nodeModulesSemanticStartedAt,
@@ -371,7 +432,7 @@ function rootLikelyContainsProjects(rootPath) {
   return fileExists(rootPath) && statSafe(rootPath)?.isDirectory();
 }
 
-function discoverScanTargets(rootPath, options, stats) {
+function discoverScanTargets(rootPath, options, stats, findings) {
   const stack = [rootPath];
   const candidateFiles = [];
   const nodeModulesDirs = [];
@@ -386,11 +447,22 @@ function discoverScanTargets(rootPath, options, stats) {
       entries = fs.readdirSync(current, { withFileTypes: true });
     } catch (error) {
       recordTraversalError(stats, error);
+      recordTraversalLimitation(findings, current, error);
       continue;
     }
 
     for (const entry of entries) {
       const fullPath = path.join(current, entry.name);
+
+      if (options.mode === SCAN_MODE_MACHINE && isDirectoryEntryLink(entry, fullPath)) {
+        addFinding(findings.limitations, {
+          type: 'skipped-alias-directory',
+          path: normalizeForDisplay(fullPath),
+          rule: 'symbolic-link-or-junction',
+          message: `Skipped ${normalizeForDisplay(fullPath)}: directory is a symbolic link or junction alias and is not scanned as an independent tree.`,
+        });
+        continue;
+      }
 
       if (direntIsDirectory(entry, fullPath)) {
         if (entry.name === 'node_modules') {
@@ -398,7 +470,7 @@ function discoverScanTargets(rootPath, options, stats) {
           continue;
         }
 
-        if (shouldSkipDirectory(entry.name, options.mode)) {
+        if (shouldSkipDirectory(entry.name, options.mode, { includeTrash: options.includeTrash })) {
           continue;
         }
 
@@ -516,6 +588,9 @@ function scanLockfile(filePath, findings) {
   try {
     text = readFileTextSafe(filePath);
   } catch (error) {
+    if (recordReadLimitation(findings, filePath, error)) {
+      return;
+    }
     addFinding(findings.errors, {
       type: 'read-error',
       path: normalizeForDisplay(filePath),
@@ -602,7 +677,13 @@ function inspectLoosePresenceByBasename(filePath, findings) {
   }
 }
 
-function applyProjectRipgrepResults(task, findings) {
+function applyProjectRipgrepResults(task, candidateFiles, findings) {
+  if (candidateFiles.length === 0) {
+    return {
+      matchedFiles: 0,
+    };
+  }
+
   const includeGlobs = [
     ...[...SCAN_CANDIDATE_BASENAMES].map((basename) => `**/${basename}`),
     '**/.github/workflows/*.yml',
@@ -631,6 +712,11 @@ function applyProjectRipgrepResults(task, findings) {
       threads: 1,
     });
   } catch (error) {
+    if (recordRipgrepLimitation(findings, task.rootPath, error, false)) {
+      return {
+        matchedFiles: 0,
+      };
+    }
     addFinding(findings.errors, {
       type: 'ripgrep-error',
       path: normalizeForDisplay(task.rootPath),
@@ -757,6 +843,11 @@ function applyNodeModulesRipgrepResults(nodeModulesDir, packageDirToName, findin
       threads: 1,
     });
   } catch (error) {
+    if (recordRipgrepLimitation(findings, nodeModulesDir, error, true)) {
+      return {
+        matchedFiles: 0,
+      };
+    }
     addFinding(findings.errors, {
       type: 'ripgrep-error',
       path: normalizeForDisplay(nodeModulesDir),
@@ -834,6 +925,7 @@ function scanInstalledPackagesSemantic(nodeModulesDir, findings, stats) {
       entries = fs.readdirSync(current, { withFileTypes: true });
     } catch (error) {
       recordTraversalError(stats, error);
+      recordTraversalLimitation(findings, current, error);
       continue;
     }
 
@@ -968,6 +1060,9 @@ function inspectContentRule(filePath, rule, findings) {
   try {
     text = readFileTextSafe(filePath);
   } catch (error) {
+    if (recordReadLimitation(findings, filePath, error)) {
+      return;
+    }
     addFinding(findings.errors, {
       type: 'read-error',
       path: normalizeForDisplay(filePath),
@@ -1003,6 +1098,82 @@ function matchNeedles(haystack, needles) {
 
 function matchAllNeedles(haystack, needles) {
   return needles.every((needle) => haystack.includes(needle));
+}
+
+function isPermissionDeniedError(error) {
+  const code = typeof error?.code === 'string' ? error.code : '';
+  return code === 'EACCES' || code === 'EPERM';
+}
+
+function isDirectoryEntryLink(entry, fullPath) {
+  return entry.isSymbolicLink() && Boolean(statSafe(fullPath)?.isDirectory());
+}
+
+function isDirectoryLinkPath(fullPath) {
+  try {
+    return fs.lstatSync(fullPath).isSymbolicLink() && Boolean(statSafe(fullPath)?.isDirectory());
+  } catch {
+    return false;
+  }
+}
+
+function isRecycleBinPath(fullPath) {
+  return normalizeSlashes(path.resolve(fullPath)).split('/').includes('$Recycle.Bin');
+}
+
+function recordTraversalLimitation(findings, fullPath, error) {
+  if (!findings || !isPermissionDeniedError(error)) {
+    return false;
+  }
+
+  addFinding(findings.limitations, {
+    type: 'unreadable-directory',
+    path: normalizeForDisplay(fullPath),
+    rule: typeof error?.code === 'string' ? error.code : 'permission-denied',
+    message: `Skipped unreadable directory ${normalizeForDisplay(fullPath)}: access was denied by the operating system (system-managed or permission-restricted area).`,
+  });
+  return true;
+}
+
+function recordReadLimitation(findings, filePath, error) {
+  if (!findings || !isPermissionDeniedError(error)) {
+    return false;
+  }
+
+  addFinding(findings.limitations, {
+    type: 'unreadable-file',
+    path: normalizeForDisplay(filePath),
+    rule: typeof error?.code === 'string' ? error.code : 'permission-denied',
+    message: `Skipped unreadable file ${normalizeForDisplay(filePath)}: access was denied by the operating system (system-managed or permission-restricted area).`,
+  });
+  return true;
+}
+
+function recordRipgrepLimitation(findings, fullPath, error, nodeModulesScope) {
+  const message = String(error?.message ?? '');
+  const normalizedMessage = message.toLowerCase();
+  const accessDenied =
+    normalizedMessage.includes('zugriff verweigert') ||
+    normalizedMessage.includes('access is denied') ||
+    normalizedMessage.includes('os error 5') ||
+    normalizedMessage.includes('io error for operation');
+  const ripgrepPanicFromAccessDenied =
+    normalizedMessage.includes("thread 'main' panicked") &&
+    normalizedMessage.includes('os error 5');
+
+  if (!accessDenied && !ripgrepPanicFromAccessDenied) {
+    return false;
+  }
+
+  addFinding(findings.limitations, {
+    type: 'limited-ripgrep-scan',
+    path: normalizeForDisplay(fullPath),
+    rule: nodeModulesScope
+      ? 'node-modules-content-pass-limited'
+      : 'project-content-pass-limited',
+    message: `Limited literal content scan for ${normalizeForDisplay(fullPath)}: unreadable or system-managed subpaths prevented a complete ripgrep pass, so this area is reported as a scan limitation instead of a scanner error.`,
+  });
+  return true;
 }
 
 function createWorker(task, onProgress) {

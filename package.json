@@ -1,14 +1,27 @@
 {
   "name": "npm-supply-chain-sentinel",
   "version": "0.1.0",
-  "description": "Cross-platform Node.js scanner for detecting documented npm supply-chain compromises, persistence artifacts, malicious install hooks, and campaign IOCs across projects or entire hosts.",
+  "description": "Cross-platform Node.js scanner for detecting documented npm supply-chain compromises, persistence artifacts, malicious install hooks, campaign IOCs, and PNPM 11 Fortress governance drift across projects or entire hosts.",
   "type": "module",
   "private": true,
+  "packageManager": "pnpm@11.2.2",
   "bin": {
     "npm-supply-chain-sentinel": "./src/cli/scan-supply-chain-campaigns.mjs"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=24.16.0"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": ">=24.16.0",
+      "onFail": "error"
+    },
+    "packageManager": {
+      "name": "pnpm",
+      "version": "11.2.2",
+      "onFail": "error"
+    }
   },
   "scripts": {
     "scan": "node ./src/cli/scan-supply-chain-campaigns.mjs",
@@ -35,5 +48,10 @@
     "incident-response",
     "threat-hunting",
     "ioc"
-  ]
+  ],
+  "dependencies": {
+    "minimatch": "catalog:",
+    "semver": "catalog:",
+    "yaml": "catalog:"
+  }
 }

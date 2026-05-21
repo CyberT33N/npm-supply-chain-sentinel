@@ -1,3 +1,4 @@
+import path from 'node:path';
 import process from 'node:process';
 
 import { stripInternalKeys, summarizeFindings } from '../domain/findings.mjs';
@@ -22,14 +23,17 @@ export function colorize(text, colorName) {
   return `${color}${text}${ANSI_COLORS.reset}`;
 }
 
-export function renderSummary(findings, options, blocklistPaths, scanStats, workersUsed, hostsAudit, firewallAudit, preflightPlan, ripgrepVersion, trashStatus) {
-  const { exactCount, heuristicCount, artifactCount, errorCount } = summarizeFindings(findings);
+export function renderSummary(findings, options, blocklistPaths, scanStats, workersUsed, hostsAudit, firewallAudit, preflightPlan, ripgrepVersion, governanceAudit) {
+  const { exactCount, heuristicCount, artifactCount, limitationCount, errorCount } = summarizeFindings(findings);
 
   console.log('');
   console.log('=== Supply-chain scan summary ===');
   console.log(`Mode: ${options.mode}`);
   console.log(`Roots scanned: ${options.roots.length}`);
   console.log(`Worker threads: ${workersUsed}`);
+  if (options.mode === 'machine-wide' || options.includeTrash) {
+    console.log(`Recycle bin scan: ${options.includeTrash ? 'included (explicit)' : 'excluded (default)'}`);
+  }
   console.log(`Preflight mode: ${preflightPlan?.mode ?? 'fast'}`);
   console.log(`Progress model: ${preflightPlan?.progressModel ?? 'tasks'}`);
   if (preflightPlan?.splitSummary) {
@@ -39,12 +43,13 @@ export function renderSummary(findings, options, blocklistPaths, scanStats, work
   console.log(`Exact package/version hits: ${exactCount}`);
   console.log(`Heuristic package/manifest hits: ${heuristicCount}`);
   console.log(`Artifact/persistence hits: ${artifactCount}`);
+  console.log(`Expected scan limitations: ${limitationCount}`);
   console.log(`Scanner errors: ${errorCount}`);
   console.log(`Directories visited: ${scanStats.directoriesVisited}`);
   console.log(`Candidate files inspected: ${scanStats.candidateFilesVisited}`);
   console.log(`node_modules directories inspected: ${scanStats.nodeModulesDirsVisited}`);
   console.log(
-    `Traversal access issues: EACCES=${scanStats.traversalErrors.EACCES}, EPERM=${scanStats.traversalErrors.EPERM}, ENOENT=${scanStats.traversalErrors.ENOENT}, OTHER=${scanStats.traversalErrors.OTHER}`,
+    `Filesystem access limitations: EACCES=${scanStats.traversalErrors.EACCES}, EPERM=${scanStats.traversalErrors.EPERM}, ENOENT=${scanStats.traversalErrors.ENOENT}, OTHER=${scanStats.traversalErrors.OTHER}`,
   );
   console.log('');
 
@@ -67,8 +72,6 @@ export function renderSummary(findings, options, blocklistPaths, scanStats, work
       console.log('');
     }
   }
-
-  renderTrashStatus(trashStatus);
 
   if (exactCount > 0) {
     console.log('High-confidence exact hits:');
@@ -94,6 +97,10 @@ export function renderSummary(findings, options, blocklistPaths, scanStats, work
     console.log('');
   }
 
+  if (limitationCount > 0) {
+    renderScanLimitations(findings.limitations);
+  }
+
   if (errorCount > 0) {
     console.log('Scanner errors:');
     for (const finding of findings.errors) {
@@ -101,6 +108,8 @@ export function renderSummary(findings, options, blocklistPaths, scanStats, work
     }
     console.log('');
   }
+
+  renderPnpmGovernanceAudit(governanceAudit);
 
   console.log('Required hosts-file entries:');
   for (const entry of buildManagedHostsEntries()) {
@@ -134,7 +143,7 @@ export function renderSummary(findings, options, blocklistPaths, scanStats, work
   }
 }
 
-export function toSerializableResult(findings, options, blocklistPaths, scanStats, workersUsed, hostsAudit, firewallAudit, preflightPlan, ripgrepVersion, trashStatus) {
+export function toSerializableResult(findings, options, blocklistPaths, scanStats, workersUsed, hostsAudit, firewallAudit, preflightPlan, ripgrepVersion, governanceAudit) {
   const summary = summarizeFindings(findings);
   return {
     scanner: 'CyberT33N-supply-chain-2026',
@@ -147,6 +156,7 @@ export function toSerializableResult(findings, options, blocklistPaths, scanStat
     },
     runtimeDependencies: {
       ripgrep: ripgrepVersion,
+      pnpm: governanceAudit?.pnpmRuntime?.version ?? null,
     },
     roots: options.roots.map((rootPath) => normalizeForDisplay(rootPath)),
     workers: workersUsed,
@@ -165,6 +175,7 @@ export function toSerializableResult(findings, options, blocklistPaths, scanStat
         }
       : null,
     includeHome: options.includeHome,
+    includeTrash: options.includeTrash,
     summary,
     scanStats,
     conclusions: dataset.executiveConclusions,
@@ -172,6 +183,7 @@ export function toSerializableResult(findings, options, blocklistPaths, scanStat
       exactHits: stripInternalKeys(findings.exactHits),
       heuristicHits: stripInternalKeys(findings.heuristicHits),
       artifactHits: stripInternalKeys(findings.artifactHits),
+      limitations: stripInternalKeys(findings.limitations),
       errors: stripInternalKeys(findings.errors),
     },
     blocklists: {
@@ -187,15 +199,6 @@ export function toSerializableResult(findings, options, blocklistPaths, scanStat
         : null,
     },
     remediation: {
-      trashStatus: trashStatus
-        ? {
-            before: serializeTrashAudit(trashStatus.before),
-            promptOffered: trashStatus.promptOffered,
-            userChoice: trashStatus.userChoice,
-            action: serializeTrashAction(trashStatus.action),
-            after: serializeTrashAudit(trashStatus.after),
-          }
-        : null,
       hostsAudit: hostsAudit
         ? {
             path: normalizeForDisplay(hostsAudit.path),
@@ -207,95 +210,164 @@ export function toSerializableResult(findings, options, blocklistPaths, scanStat
         : null,
       firewallAudit,
     },
+    governance: governanceAudit
+      ? {
+          nodeLtsFloor: governanceAudit.nodeLtsFloor,
+          recommendedProperties: governanceAudit.recommendedProperties,
+          pnpmRuntime: governanceAudit.pnpmRuntime,
+          summary: governanceAudit.summary,
+          projects: governanceAudit.projects.map((project) => ({
+            rootPath: normalizeForDisplay(project.rootPath),
+            status: project.status,
+            classification: project.classification,
+            files: {
+              packageJson: project.files.packageJson ? normalizeForDisplay(project.files.packageJson) : null,
+              pnpmWorkspace: project.files.pnpmWorkspace ? normalizeForDisplay(project.files.pnpmWorkspace) : null,
+              pnpmLockfile: project.files.pnpmLockfile ? normalizeForDisplay(project.files.pnpmLockfile) : null,
+              npmrc: project.files.npmrc ? normalizeForDisplay(project.files.npmrc) : null,
+              authIni: project.files.authIni ? normalizeForDisplay(project.files.authIni) : null,
+              gitignore: project.files.gitignore ? normalizeForDisplay(project.files.gitignore) : null,
+            },
+            summary: project.summary,
+            workspaceMembers: project.workspaceMembers.map((member) => ({
+              rootPath: normalizeForDisplay(member.rootPath),
+              packageName: member.packageJson?.value?.name ?? null,
+            })),
+            checks: project.checks,
+          })),
+        }
+      : null,
   };
 }
 
-function renderTrashStatus(trashStatus) {
-  if (!trashStatus?.before) {
+function renderPnpmGovernanceAudit(governanceAudit) {
+  if (!governanceAudit) {
     return;
   }
 
-  console.log('Trash / recycle bin status:');
-  console.log(`- Provider: ${trashStatus.before.provider}`);
-  console.log(`- Native empty command available: ${trashStatus.before.available ? 'yes' : 'no'}`);
-  if (trashStatus.before.command) {
-    console.log(`- Native empty command: ${trashStatus.before.command}`);
-  }
-  if (trashStatus.before.path) {
-    console.log(`- Inspected path: ${normalizeForDisplay(trashStatus.before.path)}`);
-  }
-  if (trashStatus.before.error) {
-    console.log(`- Audit error: ${trashStatus.before.error}`);
-  } else if (trashStatus.before.hasItems == null) {
-    console.log('- Items detected before scan: unknown');
-  } else {
-    const itemCount = Number.isInteger(trashStatus.before.itemCount) ? trashStatus.before.itemCount : 'unknown';
-    console.log(`- Items detected before scan: ${itemCount}`);
+  console.log('PNPM governance audit:');
+  console.log(`- Managed projects discovered: ${governanceAudit.summary.projectCount}`);
+  console.log(`- PNPM projects: ${governanceAudit.summary.pnpmProjectCount}`);
+  console.log(`- Single-project PNPM repos: ${governanceAudit.summary.pnpmSingleProjectCount}`);
+  console.log(`- Monorepos: ${governanceAudit.summary.pnpmMonorepoCount}`);
+  console.log(`- Node projects without PNPM governance: ${governanceAudit.summary.nonPnpmNodeProjectCount}`);
+  console.log(`- Fortress passes: ${governanceAudit.summary.passCount}`);
+  console.log(`- Fortress failures: ${governanceAudit.summary.failCount}`);
+  console.log(`- Governance warnings: ${governanceAudit.summary.warningCount}`);
+  console.log('');
+
+  if (governanceAudit.pnpmRuntime.warning) {
+    console.log(
+      `${colorize(STATUS_WARN_SYMBOL, 'yellow')} ${colorize(governanceAudit.pnpmRuntime.warning, 'yellow')}`,
+    );
+    if (!governanceAudit.pnpmRuntime.available) {
+      console.log('  Recommended PNPM Fortress properties:');
+      for (const property of governanceAudit.recommendedProperties) {
+        console.log(`  - ${property}`);
+      }
+    }
+    console.log('');
   }
 
-  if (trashStatus.promptOffered) {
-    console.log(`- Interactive prompt shown: yes (${trashStatus.userChoice})`);
-  } else if (trashStatus.userChoice !== 'not-asked') {
-    console.log(`- Trash handling mode: ${trashStatus.userChoice}`);
+  if (governanceAudit.projects.length === 0) {
+    console.log('No managed Node/PNPM project roots were discovered under the scanned roots.');
+    console.log('');
+    return;
   }
 
-  if (trashStatus.action) {
-    const color = trashStatus.action.succeeded ? 'green' : 'yellow';
-    const symbol = trashStatus.action.succeeded ? STATUS_OK_SYMBOL : STATUS_WARN_SYMBOL;
-    const message = trashStatus.action.succeeded
-      ? 'Native trash/recycle bin cleanup completed.'
-      : `Native trash/recycle bin cleanup did not complete: ${trashStatus.action.error}`;
-    console.log(`${colorize(symbol, color)} ${colorize(message, color)}`);
-    for (const warning of trashStatus.action.warnings ?? []) {
-      console.log(`  ${colorize(STATUS_WARN_SYMBOL, 'yellow')} ${warning}`);
+  console.log('Managed project reports:');
+  for (const project of governanceAudit.projects) {
+    const { symbol, colorName, label } = statusPresentation(project.status);
+    console.log(
+      `${colorize(symbol, colorName)} ${colorize(`${project.displayPath} [${project.classification.kind}]`, colorName)}`,
+    );
+    if (project.status === 'passed') {
+      const memberSuffix = project.workspaceMembers.length > 0
+        ? ` workspace_members=${project.workspaceMembers.length}`
+        : '';
+      console.log(
+        `  ${colorize('Fortress governance check passed.', 'green')} checks_ok=${project.summary.okCount}${memberSuffix}`,
+      );
+      continue;
+    }
+
+    console.log(
+      `  Status: ${label} ok=${project.summary.okCount} warnings=${project.summary.warningCount} missing=${project.summary.missingCount} invalid=${project.summary.invalidCount}`,
+    );
+    for (const check of project.checks.filter((check) => check.status !== 'ok')) {
+      const prefix = check.status === 'warning'
+        ? colorize(STATUS_WARN_SYMBOL, 'yellow')
+        : colorize(STATUS_ERROR_SYMBOL, 'red');
+      const expectation = check.expected ? ` | expected=${check.expected}` : '';
+      const actual = check.actual ? ` | actual=${check.actual}` : '';
+      console.log(`  ${prefix} ${check.property}: ${check.message}${expectation}${actual}`);
     }
   }
-
-  if (trashStatus.after) {
-    if (trashStatus.after.error) {
-      console.log(`- Items detected after cleanup: unknown (${trashStatus.after.error})`);
-    } else if (trashStatus.after.hasItems == null) {
-      console.log('- Items detected after cleanup: unknown');
-    } else {
-      const itemCount = Number.isInteger(trashStatus.after.itemCount) ? trashStatus.after.itemCount : 'unknown';
-      console.log(`- Items detected after cleanup: ${itemCount}`);
-    }
-  }
-
   console.log('');
 }
 
-function serializeTrashAudit(trashAudit) {
-  if (!trashAudit) {
-    return null;
+function statusPresentation(status) {
+  if (status === 'passed') {
+    return {
+      symbol: STATUS_OK_SYMBOL,
+      colorName: 'green',
+      label: 'passed',
+    };
+  }
+  if (status === 'failed') {
+    return {
+      symbol: STATUS_ERROR_SYMBOL,
+      colorName: 'red',
+      label: 'failed',
+    };
   }
   return {
-    provider: trashAudit.provider,
-    supported: trashAudit.supported,
-    available: trashAudit.available,
-    hasItems: trashAudit.hasItems,
-    itemCount: trashAudit.itemCount,
-    command: trashAudit.command,
-    path: trashAudit.path ? normalizeForDisplay(trashAudit.path) : null,
-    warnings: trashAudit.warnings ?? [],
-    error: trashAudit.error,
+    symbol: STATUS_WARN_SYMBOL,
+    colorName: 'yellow',
+    label: 'warning',
   };
 }
 
-function serializeTrashAction(trashAction) {
-  if (!trashAction) {
-    return null;
+function renderScanLimitations(limitations) {
+  console.log('Excluded / unreadable technical areas (not treated as scanner errors):');
+
+  const directFindings = [];
+  const groupedFindings = new Map();
+
+  for (const finding of limitations) {
+    if (!finding?.path || !['unreadable-directory', 'unreadable-file'].includes(finding.type)) {
+      directFindings.push(finding);
+      continue;
+    }
+
+    const parentPath = normalizeForDisplay(path.dirname(finding.path));
+    const key = `${finding.type}:${parentPath}`;
+    const existing = groupedFindings.get(key) ?? {
+      type: finding.type,
+      parentPath,
+      count: 0,
+    };
+    existing.count += 1;
+    groupedFindings.set(key, existing);
   }
-  return {
-    provider: trashAction.provider,
-    supported: trashAction.supported,
-    available: trashAction.available,
-    attempted: trashAction.attempted,
-    succeeded: trashAction.succeeded,
-    command: trashAction.command,
-    warnings: trashAction.warnings ?? [],
-    error: trashAction.error,
-  };
+
+  for (const finding of directFindings) {
+    console.log(`- ${finding.message}`);
+  }
+
+  for (const group of [...groupedFindings.values()].sort((left, right) => {
+    if (right.count !== left.count) {
+      return right.count - left.count;
+    }
+    return left.parentPath.localeCompare(right.parentPath);
+  })) {
+    const noun = group.type === 'unreadable-file'
+      ? group.count === 1 ? 'unreadable file' : 'unreadable files'
+      : group.count === 1 ? 'unreadable directory' : 'unreadable directories';
+    console.log(`- ${group.count} ${noun} under ${group.parentPath}: access was denied by the operating system (system-managed or permission-restricted area).`);
+  }
+
+  console.log('');
 }
 
 function renderHostsAudit(hostsAudit) {

@@ -3,6 +3,7 @@ export function createFindingsContainer() {
     exactHits: [],
     heuristicHits: [],
     artifactHits: [],
+    limitations: [],
     errors: [],
   };
 }
@@ -22,7 +23,7 @@ export function addFinding(targetArray, finding) {
 }
 
 export function mergeFindings(target, source) {
-  for (const key of ['exactHits', 'heuristicHits', 'artifactHits', 'errors']) {
+  for (const key of ['exactHits', 'heuristicHits', 'artifactHits', 'limitations', 'errors']) {
     for (const finding of source[key] ?? []) {
       addFinding(target[key], finding);
     }
@@ -37,6 +38,7 @@ export function summarizeFindings(findings) {
   const exactCount = findings.exactHits.length;
   const heuristicCount = findings.heuristicHits.length;
   const artifactCount = findings.artifactHits.length;
+  const limitationCount = findings.limitations.length;
   const errorCount = findings.errors.length;
-  return { exactCount, heuristicCount, artifactCount, errorCount };
+  return { exactCount, heuristicCount, artifactCount, limitationCount, errorCount };
 }

@@ -32,6 +32,7 @@ export const IGNORED_DIR_NAMES = new Set([
   'vendor',
 ]);
 export const ALWAYS_SKIPPED_DIR_NAMES = new Set(['.git', '.hg', '.svn']);
+export const MACHINE_MODE_SKIPPED_DIR_NAMES = new Set(['$Recycle.Bin']);
 export const PROJECT_MODE_SKIPPED_DIR_NAMES = new Set([
   '.next',
   '.nuxt',
@@ -199,8 +200,11 @@ function buildRipgrepLiteralPatterns() {
   return [...patterns];
 }
 
-export function shouldSkipDirectory(dirName, mode) {
+export function shouldSkipDirectory(dirName, mode, options = {}) {
   if (ALWAYS_SKIPPED_DIR_NAMES.has(dirName)) {
+    return true;
+  }
+  if (mode === SCAN_MODE_MACHINE && !options.includeTrash && MACHINE_MODE_SKIPPED_DIR_NAMES.has(dirName)) {
     return true;
   }
   if (mode === SCAN_MODE_PROJECT && PROJECT_MODE_SKIPPED_DIR_NAMES.has(dirName)) {

@@ -59,6 +59,7 @@ export async function buildPreflightPlan(tasks, options = {}, reportProgress = (
       rootPath: task.rootPath,
       mode: task.mode,
       shallow: task.shallow,
+      includeTrash: task.includeTrash,
       workUnits,
       inventory,
     };
@@ -112,6 +113,7 @@ function buildFastPreflightPlan(tasks) {
       rootPath: task.rootPath,
       mode: task.mode,
       shallow: task.shallow,
+      includeTrash: task.includeTrash,
       workUnits: 1,
       inventory: null,
     })),
@@ -179,7 +181,7 @@ function inventoryTask(task, options) {
           continue;
         }
 
-        if (shouldSkipDirectory(entry.name, task.mode)) {
+        if (shouldSkipDirectory(entry.name, task.mode, { includeTrash: task.includeTrash })) {
           continue;
         }
 
@@ -328,6 +330,7 @@ function buildExecutionPlan(preflightPlan) {
         rootPath: taskPlan.rootPath,
         mode: taskPlan.mode,
         shallow: taskPlan.shallow,
+        includeTrash: taskPlan.includeTrash,
       });
       executionTaskPlans.push({
         taskId: String(taskPlan.taskId),
@@ -352,6 +355,7 @@ function buildExecutionPlan(preflightPlan) {
       rootPath: taskPlan.rootPath,
       mode: taskPlan.mode,
       shallow: true,
+      includeTrash: taskPlan.includeTrash,
     });
     executionTaskPlans.push({
       taskId: rootTaskId,
@@ -368,6 +372,7 @@ function buildExecutionPlan(preflightPlan) {
         rootPath: childPlan.rootPath,
         mode: taskPlan.mode,
         shallow: false,
+        includeTrash: taskPlan.includeTrash,
       });
       executionTaskPlans.push({
         taskId: childTaskId,
