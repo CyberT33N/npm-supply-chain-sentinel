@@ -7,6 +7,7 @@ import YAML from 'yaml';
 
 import {
   CURRENT_NODE_LTS,
+  GOVERNANCE_OWNER_SENTINEL_BASENAMES,
   MANIFEST_DEPENDENCY_SECTIONS,
   MONOREPO_WORKSPACE_ARRAY_RULES,
   MONOREPO_WORKSPACE_EXACT_RULES,
@@ -21,6 +22,7 @@ import {
   SHARED_WORKSPACE_EXACT_RULES,
   SHARED_WORKSPACE_OBJECT_RULES,
   SINGLE_PROJECT_FORBIDDEN_WORKSPACE_RULES,
+  classifyGovernanceUnmanagedPath,
   isAllowedProjectNpmrcKey,
   isForbiddenProjectTokenHelperKey,
   isGovernanceDiscoveryExcludedDirName,
@@ -43,6 +45,8 @@ const PROJECT_ROOT_SENTINELS = new Set([
   PACKAGE_JSON_BASENAME,
   PNPM_WORKSPACE_BASENAME,
 ]);
+const GOVERNANCE_DISCOVERY_REASON_UNMANAGED_PATH = 'unmanaged-path';
+const GOVERNANCE_DISCOVERY_REASON_MISSING_OWNERSHIP = 'missing-ownership';
 
 export function inspectPnpmRuntime() {
   const runtime = detectPnpmRuntimeVersion();
@@ -125,8 +129,8 @@ function extractSemverFromText(text) {
 }
 
 export function auditPnpmGovernance(rootPaths, options = {}, pnpmRuntime = inspectPnpmRuntime()) {
-  const projectRoots = discoverProjectRoots(rootPaths, options);
-  const auditedProjects = projectRoots
+  const discovery = discoverProjectRoots(rootPaths, options);
+  const auditedProjects = discovery.projectRoots
     .map((rootPath) => auditProjectRoot(rootPath, options, pnpmRuntime))
     .sort((left, right) => left.rootPath.localeCompare(right.rootPath));
   const projects = collapseWorkspaceMembers(auditedProjects);
@@ -135,6 +139,7 @@ export function auditPnpmGovernance(rootPaths, options = {}, pnpmRuntime = inspe
     pnpmRuntime,
     nodeLtsFloor: CURRENT_NODE_LTS,
     recommendedProperties: PNPM_RECOMMENDED_SECURITY_PROPERTIES,
+    discovery: discovery.summary,
     projects,
     summary: summarizeGovernance(projects, pnpmRuntime),
   };
@@ -143,12 +148,17 @@ export function auditPnpmGovernance(rootPaths, options = {}, pnpmRuntime = inspe
 function discoverProjectRoots(rootPaths, options) {
   const discovered = new Set();
   const visited = new Set();
-  const stack = [...new Set(rootPaths.map((rootPath) => path.resolve(rootPath)))];
+  const scanRoots = [...new Set(rootPaths.map((rootPath) => path.resolve(rootPath)))];
+  const explicitScanRoots = new Set(scanRoots);
+  const stack = [...scanRoots];
 
   while (stack.length > 0) {
     const current = stack.pop();
     const currentStats = statSafe(current);
     if (!currentStats?.isDirectory()) {
+      continue;
+    }
+    if (shouldSkipGovernancePath(current, options, explicitScanRoots)) {
       continue;
     }
 
@@ -180,11 +190,43 @@ function discoverProjectRoots(rootPaths, options) {
       if (shouldSkipGovernanceDirectory(entry.name, options)) {
         continue;
       }
+      if (shouldSkipGovernancePath(fullPath, options, explicitScanRoots)) {
+        continue;
+      }
       stack.push(fullPath);
     }
   }
 
-  return [...discovered];
+  const candidateRoots = [...discovered].sort((left, right) => left.localeCompare(right));
+  const projectRoots = [];
+  const suppressedCounts = {
+    unmanagedPathCount: 0,
+    missingOwnershipCount: 0,
+  };
+
+  for (const candidateRoot of candidateRoots) {
+    const decision = classifyGovernanceCandidateRoot(candidateRoot, explicitScanRoots, options);
+    if (decision.managed) {
+      projectRoots.push(candidateRoot);
+      continue;
+    }
+    if (decision.reason === GOVERNANCE_DISCOVERY_REASON_UNMANAGED_PATH) {
+      suppressedCounts.unmanagedPathCount += 1;
+      continue;
+    }
+    suppressedCounts.missingOwnershipCount += 1;
+  }
+
+  return {
+    projectRoots,
+    summary: {
+      candidateRootCount: candidateRoots.length,
+      acceptedRootCount: projectRoots.length,
+      suppressedRootCount: candidateRoots.length - projectRoots.length,
+      suppressedUnmanagedPathCount: suppressedCounts.unmanagedPathCount,
+      suppressedMissingOwnershipCount: suppressedCounts.missingOwnershipCount,
+    },
+  };
 }
 
 function containsProjectRootSentinel(rootPath) {
@@ -209,6 +251,56 @@ function shouldSkipGovernanceDirectory(dirName, options) {
     return true;
   }
   return false;
+}
+
+function shouldSkipGovernancePath(fullPath, options, explicitScanRoots) {
+  if (options.mode !== SCAN_MODE_MACHINE) {
+    return false;
+  }
+  const resolvedPath = path.resolve(fullPath);
+  if (explicitScanRoots.has(resolvedPath)) {
+    return false;
+  }
+  if (hasGovernanceOwnershipSignal(resolvedPath)) {
+    return false;
+  }
+  return Boolean(classifyGovernanceUnmanagedPath(resolvedPath, process.platform));
+}
+
+function classifyGovernanceCandidateRoot(rootPath, explicitScanRoots, options) {
+  if (options.mode === SCAN_MODE_MACHINE) {
+    if (hasGovernanceOwnershipSignal(rootPath)) {
+      return {
+        managed: true,
+      };
+    }
+    if (classifyGovernanceUnmanagedPath(rootPath, process.platform)) {
+      return {
+        managed: false,
+        reason: GOVERNANCE_DISCOVERY_REASON_UNMANAGED_PATH,
+      };
+    }
+    return {
+      managed: false,
+      reason: GOVERNANCE_DISCOVERY_REASON_MISSING_OWNERSHIP,
+    };
+  }
+
+  if (explicitScanRoots.has(path.resolve(rootPath)) || hasGovernanceOwnershipSignal(rootPath)) {
+    return {
+      managed: true,
+    };
+  }
+  return {
+    managed: false,
+    reason: GOVERNANCE_DISCOVERY_REASON_MISSING_OWNERSHIP,
+  };
+}
+
+function hasGovernanceOwnershipSignal(rootPath) {
+  return GOVERNANCE_OWNER_SENTINEL_BASENAMES.some((basename) =>
+    fileExists(path.join(rootPath, basename)),
+  );
 }
 
 function collapseWorkspaceMembers(projects) {

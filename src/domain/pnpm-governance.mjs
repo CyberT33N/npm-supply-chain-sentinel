@@ -15,12 +15,20 @@ export const MANIFEST_DEPENDENCY_SECTIONS = Object.freeze([
   'optionalDependencies',
   'peerDependencies',
 ]);
+export const GOVERNANCE_OWNER_SENTINEL_BASENAMES = Object.freeze([
+  '.git',
+  '.hg',
+  '.svn',
+]);
 
 export const GOVERNANCE_DISCOVERY_EXCLUDED_DIR_NAMES = new Set([
   '.git',
   '.hg',
   '.svn',
+  '.angular',
+  '.build',
   '.next',
+  '.nx',
   '.nuxt',
   '.turbo',
   '.cache',
@@ -208,8 +216,115 @@ const ALLOWED_PROJECT_NPMRC_REGISTRY_KEY_SUFFIXES = new Set([
   'keyfile',
 ]);
 
+const GOVERNANCE_UNMANAGED_PATH_RULES = Object.freeze([
+  {
+    id: 'installed-program-files',
+    description: 'Installed Windows applications under Program Files',
+    platforms: ['win32'],
+    pattern: /^(?:[a-z]:)?\/program files(?: \(x86\))?(?:\/|$)/u,
+  },
+  {
+    id: 'windows-store-apps',
+    description: 'Windows Store application payloads',
+    platforms: ['win32'],
+    pattern: /^(?:[a-z]:)?\/program files\/windowsapps(?:\/|$)/u,
+  },
+  {
+    id: 'local-program-bundles',
+    description: 'Per-user installed application bundles',
+    platforms: ['win32'],
+    pattern: /^(?:[a-z]:)?\/users\/[^/]+\/appdata\/local\/programs(?:\/|$)/u,
+  },
+  {
+    id: 'user-editor-extension-store',
+    description: 'User-level IDE and editor extension stores',
+    platforms: ['win32', 'darwin', 'linux'],
+    pattern: /^(?:[a-z]:)?\/(?:users|home)\/[^/]+\/\.(?:vscode|cursor|windsurf|trae|antigravity)\/extensions(?:\/|$)/u,
+  },
+  {
+    id: 'user-agent-tooling',
+    description: 'User-level agent plugin and tool state',
+    platforms: ['win32', 'darwin', 'linux'],
+    pattern: /^(?:[a-z]:)?\/(?:users|home)\/[^/]+\/\.(?:codex|continue)(?:\/|$)/u,
+  },
+  {
+    id: 'pnpm-runtime-store',
+    description: 'pnpm runtime store and cache material',
+    platforms: ['win32'],
+    pattern: /^(?:[a-z]:)?\/users\/[^/]+\/appdata\/local\/(?:pnpm|pnpm-cache)(?:\/|$)/u,
+  },
+  {
+    id: 'corepack-runtime-store',
+    description: 'Corepack-managed package-manager payloads',
+    platforms: ['win32'],
+    pattern: /^(?:[a-z]:)?\/users\/[^/]+\/appdata\/local\/node\/corepack(?:\/|$)/u,
+  },
+  {
+    id: 'cypress-runtime-cache',
+    description: 'Cypress runtime cache bundles',
+    platforms: ['win32'],
+    pattern: /^(?:[a-z]:)?\/users\/[^/]+\/appdata\/local\/cypress\/cache(?:\/|$)/u,
+  },
+  {
+    id: 'trunk-runtime-store',
+    description: 'Trunk plugin and tool payloads',
+    platforms: ['win32'],
+    pattern: /^(?:[a-z]:)?\/users\/[^/]+\/appdata\/local\/trunk(?:\/|$)/u,
+  },
+  {
+    id: 'typescript-runtime-cache',
+    description: 'Editor-managed TypeScript runtime caches',
+    platforms: ['win32'],
+    pattern: /^(?:[a-z]:)?\/users\/[^/]+\/appdata\/local\/microsoft\/typescript(?:\/|$)/u,
+  },
+  {
+    id: 'electron-app-resources',
+    description: 'Embedded Electron application resources',
+    platforms: ['win32', 'darwin', 'linux'],
+    pattern: /\/resources\/app(?:\.asar\.unpacked)?(?:\/|$)/u,
+  },
+  {
+    id: 'desktop-runtime-assets',
+    description: 'Embedded desktop runtime asset payloads',
+    platforms: ['win32', 'darwin', 'linux'],
+    pattern: /(?:^|\/)(desktop-assets|trusted-ui)(?:\/|$)/u,
+  },
+  {
+    id: 'macos-app-bundles',
+    description: 'Installed macOS .app bundles',
+    platforms: ['darwin'],
+    pattern: /^\/(?:applications|users\/[^/]+\/applications)\/.+\.app\/contents(?:\/|$)/u,
+  },
+  {
+    id: 'linux-opt-app-bundles',
+    description: 'Installed Linux application bundles under /opt',
+    platforms: ['linux'],
+    pattern: /^\/opt\/.+\/resources\/app(?:\/|$)/u,
+  },
+]);
+
 export function isGovernanceDiscoveryExcludedDirName(dirName) {
   return GOVERNANCE_DISCOVERY_EXCLUDED_DIR_NAMES.has(String(dirName).toLowerCase());
+}
+
+export function normalizeGovernancePathForMatching(inputPath) {
+  return String(inputPath).replace(/\\/g, '/').toLowerCase();
+}
+
+export function classifyGovernanceUnmanagedPath(inputPath, platform) {
+  const normalizedPath = normalizeGovernancePathForMatching(inputPath);
+  for (const rule of GOVERNANCE_UNMANAGED_PATH_RULES) {
+    if (!rule.platforms.includes(platform)) {
+      continue;
+    }
+    if (rule.pattern.test(normalizedPath)) {
+      return {
+        id: rule.id,
+        description: rule.description,
+      };
+    }
+  }
+  return null;
 }
 
 export function isAllowedProjectNpmrcKey(rawKey) {

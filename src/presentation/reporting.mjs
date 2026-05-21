@@ -215,6 +215,7 @@ export function toSerializableResult(findings, options, blocklistPaths, scanStat
           nodeLtsFloor: governanceAudit.nodeLtsFloor,
           recommendedProperties: governanceAudit.recommendedProperties,
           pnpmRuntime: governanceAudit.pnpmRuntime,
+          discovery: governanceAudit.discovery ?? null,
           summary: governanceAudit.summary,
           projects: governanceAudit.projects.map((project) => ({
             rootPath: normalizeForDisplay(project.rootPath),
@@ -246,6 +247,12 @@ function renderPnpmGovernanceAudit(governanceAudit) {
   }
 
   console.log('PNPM governance audit:');
+  if (governanceAudit.discovery) {
+    console.log(`- Discovery candidates: ${governanceAudit.discovery.candidateRootCount}`);
+    console.log(`- Accepted managed roots: ${governanceAudit.discovery.acceptedRootCount}`);
+    console.log(`- Suppressed unmanaged-path candidates: ${governanceAudit.discovery.suppressedUnmanagedPathCount}`);
+    console.log(`- Suppressed missing-ownership candidates: ${governanceAudit.discovery.suppressedMissingOwnershipCount}`);
+  }
   console.log(`- Managed projects discovered: ${governanceAudit.summary.projectCount}`);
   console.log(`- PNPM projects: ${governanceAudit.summary.pnpmProjectCount}`);
   console.log(`- Single-project PNPM repos: ${governanceAudit.summary.pnpmSingleProjectCount}`);
