@@ -7,6 +7,7 @@
 - curated IOC and campaign dataset
 - cross-platform filesystem and package scanning
 - PNPM 11 Fortress governance auditing for managed project roots
+- standalone PNPM governance CLI execution for explicit project roots
 - project-mode and machine-wide scan modes
 - worker-thread-based parallel traversal
 - `ripgrep`-backed content inspection
@@ -21,7 +22,8 @@ That means:
 - the domain core is the detection and governance policy model,
 - the CLI is an orchestration and delivery adapter,
 - generated blocklists and incident reports are read models,
-- governance auditing and IOC scanning are related but intentionally distinct surfaces.
+- governance auditing and IOC scanning are related but intentionally distinct surfaces,
+- the PNPM governance surface can be executed on its own without invoking the broader threat-hunting flow.
 
 ## Runtime Model
 

@@ -6,7 +6,8 @@
   "private": true,
   "packageManager": "pnpm@11.2.2",
   "bin": {
-    "npm-supply-chain-sentinel": "./src/cli/scan-supply-chain-campaigns.mjs"
+    "npm-supply-chain-sentinel": "./src/cli/scan-supply-chain-campaigns.mjs",
+    "npm-supply-chain-sentinel-pnpm-governance": "./src/cli/scan-pnpm-governance.mjs"
   },
   "engines": {
     "node": ">=24.16.0"
@@ -37,6 +38,8 @@
     "scan:machine-wide:full": "node ./src/cli/scan-supply-chain-campaigns.mjs --machine-wide --apply-hosts --apply-firewall",
     "scan:machine-wide:full:heartbeat-5s": "node ./src/cli/scan-supply-chain-campaigns.mjs --machine-wide --heartbeat-sec 5 --apply-hosts --apply-firewall",
     "scan:machine-wide:fast-preflight": "node ./src/cli/scan-supply-chain-campaigns.mjs --machine-wide --fast-preflight",
+    "scan:pnpm-governance": "node ./src/cli/scan-pnpm-governance.mjs",
+    "scan:pnpm-governance:help": "node ./src/cli/scan-pnpm-governance.mjs --help",
     "scan:quiet": "node ./src/cli/scan-supply-chain-campaigns.mjs --quiet",
     "scan:help": "node ./src/cli/scan-supply-chain-campaigns.mjs --help"
   },

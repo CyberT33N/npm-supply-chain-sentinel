@@ -22,6 +22,23 @@ The convention document defines the canonical policy.
 - classifies accepted PNPM roots as `pnpm-single-project` or `pnpm-monorepo`
 - validates `pnpm-workspace.yaml`, root `package.json`, lockfile presence, and project-local auth files
 - checks PNPM 11 pinning, Node.js runtime alignment, build governance, trust policy, lockfile discipline, and workspace protocol usage
+- can run as a standalone CLI that audits only PNPM governance without running IOC, malware, persistence, hosts, or firewall flows first
+
+## Standalone execution
+
+The repository provides a governance-only entrypoint:
+
+```bash
+node src/cli/scan-pnpm-governance.mjs
+```
+
+Explicit roots can be supplied either as separate positional path arguments or as a single comma-separated token:
+
+```bash
+node src/cli/scan-pnpm-governance.mjs C:\git
+node src/cli/scan-pnpm-governance.mjs C:\git,C:\Projects
+node src/cli/scan-pnpm-governance.mjs C:\git C:\Projects
+```
 
 ## Managed-project discovery model
 

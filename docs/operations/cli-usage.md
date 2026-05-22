@@ -38,6 +38,20 @@ Apply outbound firewall rules:
 node src/cli/scan-supply-chain-campaigns.mjs --apply-firewall
 ```
 
+Standalone PNPM governance scan (current project scope only):
+
+```bash
+node src/cli/scan-pnpm-governance.mjs
+```
+
+Standalone PNPM governance scan for one or more explicit roots:
+
+```bash
+node src/cli/scan-pnpm-governance.mjs C:\git
+node src/cli/scan-pnpm-governance.mjs C:\git,C:\Projects
+node src/cli/scan-pnpm-governance.mjs C:\git C:\Projects
+```
+
 Complete machine-wide scan plus remediation:
 
 ```bash
@@ -59,6 +73,8 @@ node src/cli/scan-supply-chain-campaigns.mjs --machine-wide --apply-hosts --appl
 - `pnpm run scan:machine-wide:full`
 - `pnpm run scan:machine-wide:full:heartbeat-5s`
 - `pnpm run scan:machine-wide:fast-preflight`
+- `pnpm run scan:pnpm-governance`
+- `pnpm run scan:pnpm-governance:help`
 - `pnpm run scan:quiet`
 - `pnpm run scan:help`
 
@@ -73,4 +89,12 @@ You can also forward recycle-bin flags:
 ```bash
 pnpm run scan:machine-wide -- --include-trash
 pnpm run scan:machine-wide:full -- --include-recycle-bin
+```
+
+You can forward explicit governance roots either as separate positional arguments or as a single comma-separated value:
+
+```bash
+pnpm run scan:pnpm-governance -- C:\git
+pnpm run scan:pnpm-governance -- C:\git,C:\Projects
+pnpm run scan:pnpm-governance -- C:\git C:\Projects
 ```

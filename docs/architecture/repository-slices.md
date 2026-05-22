@@ -5,7 +5,7 @@ The repository is intentionally split by responsibility.
 ## Source Slices
 
 - `src/cli/`
-  Delivery entrypoints and executable CLI wiring.
+  Delivery entrypoints and executable CLI wiring for the full supply-chain scan and the governance-only scan.
 - `src/application/`
   Application orchestration, preflight planning, worker scheduling, filesystem/package scanning, and PNPM governance auditing.
 - `src/domain/`
@@ -15,7 +15,7 @@ The repository is intentionally split by responsibility.
 - `src/data/`
   Curated campaign intelligence, exact package/version rules, heuristic signatures, and network indicators.
 - `src/presentation/`
-  Human-readable and serializable reporting surfaces.
+  Human-readable and serializable reporting surfaces, including the dedicated PNPM governance report model.
 
 ## Documentation Slices
 
