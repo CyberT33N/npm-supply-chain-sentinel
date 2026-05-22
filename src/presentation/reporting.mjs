@@ -189,9 +189,11 @@ export function toSerializableResult(findings, options, blocklistPaths, scanStat
     },
     blocklists: {
       hostsDomains: dataset.networkIndicators.hostsBlocklistDomains,
+      hostsEntries: buildManagedHostsEntries().map((entry) => entry.line),
       firewallIps: dataset.networkIndicators.firewallIpBlocklist,
       detectionOnlyDomains: dataset.networkIndicators.detectionOnlyDomains,
       detectionOnlyIps: dataset.networkIndicators.detectionOnlyIps,
+      caveats: dataset.blocklistCaveats,
       writtenFiles: blocklistPaths
         ? {
             hostsPath: normalizeForDisplay(blocklistPaths.hostsPath),
@@ -204,6 +206,7 @@ export function toSerializableResult(findings, options, blocklistPaths, scanStat
         ? {
             path: normalizeForDisplay(hostsAudit.path),
             readable: hostsAudit.readable,
+            requiredEntries: hostsAudit.requiredEntries.map((entry) => entry.line),
             presentEntries: hostsAudit.presentEntries.map((entry) => entry.line),
             missingEntries: hostsAudit.missingEntries.map((entry) => entry.line),
             error: hostsAudit.error,

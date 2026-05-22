@@ -32,6 +32,8 @@ The repository provides a governance-only entrypoint:
 node src/cli/scan-pnpm-governance.mjs
 ```
 
+Every governance-only run refreshes `generated/latest-pnpm-governance-scan.json`.
+
 Explicit roots can be supplied either as separate positional path arguments or as a single comma-separated token:
 
 ```bash

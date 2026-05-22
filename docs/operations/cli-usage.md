@@ -8,6 +8,8 @@ Project scan (default):
 node src/cli/scan-supply-chain-campaigns.mjs
 ```
 
+This command also refreshes `generated/latest-scan.json`.
+
 Machine-wide scan:
 
 ```bash
@@ -44,6 +46,8 @@ Standalone PNPM governance scan (current project scope only):
 node src/cli/scan-pnpm-governance.mjs
 ```
 
+This command also refreshes `generated/latest-pnpm-governance-scan.json`.
+
 Standalone PNPM governance scan for one or more explicit roots:
 
 ```bash
@@ -74,6 +78,7 @@ node src/cli/scan-supply-chain-campaigns.mjs --machine-wide --apply-hosts --appl
 - `pnpm run scan:machine-wide:full:heartbeat-5s`
 - `pnpm run scan:machine-wide:fast-preflight`
 - `pnpm run scan:pnpm-governance`
+- `pnpm run scan:pnpm-governance:json`
 - `pnpm run scan:pnpm-governance:help`
 - `pnpm run scan:quiet`
 - `pnpm run scan:help`
@@ -81,7 +86,7 @@ node src/cli/scan-supply-chain-campaigns.mjs --machine-wide --apply-hosts --appl
 ## Forwarding custom flags
 
 ```bash
-pnpm run scan -- --root ../repo-a --workers 8 --json ./docs/security/custom-scan.json
+pnpm run scan -- --root ../repo-a --workers 8 --json ./generated/custom-scan.json
 ```
 
 You can also forward recycle-bin flags:
@@ -98,3 +103,8 @@ pnpm run scan:pnpm-governance -- C:\git
 pnpm run scan:pnpm-governance -- C:\git,C:\Projects
 pnpm run scan:pnpm-governance -- C:\git C:\Projects
 ```
+
+## Default generated reports
+
+- Full supply-chain scan: `generated/latest-scan.json`
+- Governance-only scan: `generated/latest-pnpm-governance-scan.json`

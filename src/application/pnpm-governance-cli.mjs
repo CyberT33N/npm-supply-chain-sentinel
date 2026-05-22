@@ -1,11 +1,14 @@
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { SCAN_MODE_MACHINE, SCAN_MODE_PROJECT } from '../domain/policy.mjs';
 import { detectProjectRoot, normalizeForDisplay, toAbsolutePath } from '../infrastructure/fs-utils.mjs';
+import {
+  LATEST_PNPM_GOVERNANCE_REPORT_BASENAME,
+  resolveGeneratedReportPath,
+  writeJsonArtifacts,
+} from '../infrastructure/report-artifacts.mjs';
 import { renderPnpmGovernanceAudit, toSerializablePnpmGovernanceResult } from '../presentation/pnpm-governance-reporting.mjs';
 import { enumerateMachineRoots } from './scanner.mjs';
 import { auditPnpmGovernance, inspectPnpmRuntime } from './pnpm-governance.mjs';
@@ -36,17 +39,22 @@ export async function main() {
 
   renderStandaloneGovernanceSummary(args, governanceAudit);
 
-  if (args.jsonPath) {
-    try {
-      writeJsonReport(
-        args.jsonPath === '-' ? '-' : toAbsolutePath(args.jsonPath),
-        toSerializablePnpmGovernanceResult(governanceAudit, args),
-      );
-    } catch (error) {
-      console.error(`Could not write JSON report: ${error.message}`);
-      process.exitCode = 2;
-      return;
-    }
+  const latestReportPath = resolveGeneratedReportPath(LATEST_PNPM_GOVERNANCE_REPORT_BASENAME);
+  const exportReportPath = args.jsonPath === null
+    ? null
+    : args.jsonPath === '-'
+      ? '-'
+      : toAbsolutePath(args.jsonPath);
+  try {
+    writeJsonArtifacts({
+      latestPath: latestReportPath,
+      exportPath: exportReportPath,
+      payload: toSerializablePnpmGovernanceResult(governanceAudit, args),
+    });
+  } catch (error) {
+    console.error(`Could not write JSON report: ${error.message}`);
+    process.exitCode = 2;
+    return;
   }
 
   process.exitCode = governanceAudit?.summary?.failCount > 0 ? 1 : 0;
@@ -65,12 +73,13 @@ Options:
   --host-wide                Alias for --machine-wide.
   --include-trash            Include the OS trash/recycle bin during machine-wide discovery.
   --include-recycle-bin      Alias for --include-trash.
-  --json <path|->            Write the governance JSON result to a file or stdout ("-").
+  --json <path|->            Additionally write the governance JSON result to a file or stdout ("-").
   --help                     Show this help.
 
 Notes:
   - Positional paths are accepted. Each positional token may be a single path or a comma-separated list.
   - Default scope: the project root that contains this CLI.
+  - The latest governance JSON report is always written to ./generated/latest-pnpm-governance-scan.json.
   - This command runs only the PNPM governance audit. It does not run IOC, malware,
     persistence, hosts, firewall, or remediation flows.
   - --machine-wide cannot be combined with explicit paths.
@@ -186,11 +195,3 @@ function renderStandaloneGovernanceSummary(args, governanceAudit) {
   renderPnpmGovernanceAudit(governanceAudit);
 }
 
-function writeJsonReport(jsonPath, payload) {
-  const text = `${JSON.stringify(payload, null, 2)}${os.EOL}`;
-  if (jsonPath === '-') {
-    process.stdout.write(text);
-    return;
-  }
-  fs.writeFileSync(jsonPath, text, 'utf8');
-}

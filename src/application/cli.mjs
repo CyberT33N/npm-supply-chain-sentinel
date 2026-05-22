@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +17,11 @@ import {
   writeBlocklists,
 } from '../infrastructure/remediation.mjs';
 import { ensureRipgrepInstalled } from '../infrastructure/ripgrep.mjs';
+import {
+  LATEST_FULL_SCAN_REPORT_BASENAME,
+  resolveGeneratedReportPath,
+  writeJsonArtifacts,
+} from '../infrastructure/report-artifacts.mjs';
 import { renderSummary, toSerializableResult } from '../presentation/reporting.mjs';
 import {
   buildScanTasks,
@@ -202,14 +205,22 @@ export async function main() {
     ripgrepVersion,
     governanceAudit,
   );
-  if (args.jsonPath) {
-    try {
-      writeJsonReport(args.jsonPath === '-' ? '-' : toAbsolutePath(args.jsonPath), payload);
-    } catch (error) {
-      console.error(`Could not write JSON report: ${error.message}`);
-      process.exitCode = 2;
-      return;
-    }
+  const latestReportPath = resolveGeneratedReportPath(LATEST_FULL_SCAN_REPORT_BASENAME);
+  const exportReportPath = args.jsonPath === null
+    ? null
+    : args.jsonPath === '-'
+      ? '-'
+      : toAbsolutePath(args.jsonPath);
+  try {
+    writeJsonArtifacts({
+      latestPath: latestReportPath,
+      exportPath: exportReportPath,
+      payload,
+    });
+  } catch (error) {
+    console.error(`Could not write JSON report: ${error.message}`);
+    process.exitCode = 2;
+    return;
   }
 
   const summary = summarizeFindings(findings);
@@ -238,7 +249,7 @@ Options:
   --host-wide                Alias for --machine-wide.
   --workers <count>          Worker-thread count for parallel subtree scanning.
   --no-home                  Skip fixed machine/user paths under the current home directory.
-  --json <path|->            Write full JSON result to a file or stdout ("-").
+  --json <path|->            Additionally write the full JSON result to a file or stdout ("-").
   --write-blocklists <dir>   Write hosts + firewall blocklist files into a directory.
   --apply-hosts              Apply a managed blocklist section to the local hosts file.
   --apply-firewall           Apply outbound firewall block rules for the documented IOC IPs.
@@ -264,6 +275,7 @@ Notes:
     inventory pass and fall back to the lighter task-based mode.
   - Heartbeats are enabled by default. Use --no-heartbeat to disable them. Default interval:
     10 seconds. Override with --heartbeat-sec.
+  - The latest full scan JSON report is always written to ./generated/latest-scan.json.
   - ripgrep (rg) must be installed and available on PATH.
   - Managed project roots are also audited for PNPM 11 Fortress governance outside package-manager-managed areas such as node_modules, .pnpm, .pnpm-store, .yarn, .bun, jspm_packages, and bower_components.
   - Exact package/version hits are high confidence.
@@ -432,15 +444,6 @@ function parseArgs(argv) {
     throw new Error('--machine-wide cannot be combined with --root');
   }
   return args;
-}
-
-function writeJsonReport(jsonPath, payload) {
-  const text = `${JSON.stringify(payload, null, 2)}${os.EOL}`;
-  if (jsonPath === '-') {
-    process.stdout.write(text);
-    return;
-  }
-  fs.writeFileSync(jsonPath, text, 'utf8');
 }
 
 function createStageLogger() {

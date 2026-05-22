@@ -2,5 +2,5 @@ node_modules/
 .pnpm/
 .npmrc
 auth.ini
-docs/security/latest-scan.json
+generated/
 pnpm-debug.log*

@@ -31,5 +31,5 @@ From a 12-Factor perspective, the scanner is modeled as a stateless CLI process:
 
 - configuration is explicit through CLI arguments,
 - runtime dependencies are pinned and documented,
-- generated outputs are written to explicit paths,
+- generated operational reports are written to explicit runtime paths under `generated/`,
 - administrative mutation is isolated to explicit remediation commands.
