@@ -7,3 +7,4 @@ pnpm-debug.log*
 tsconfig.node.tsbuildinfo
 tsconfig.tests.tsbuildinfo
 tsconfig.types.tsbuildinfo
+coverage/
