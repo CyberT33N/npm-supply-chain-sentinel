@@ -25,6 +25,8 @@
     }
   },
   "scripts": {
+    "test": "vitest run --config ./vitest.config.ts",
+    "check:types": "tsc -b ./tsconfig.json",
     "scan": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts",
     "scan:project": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts",
     "scan:project:verbose": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts",
