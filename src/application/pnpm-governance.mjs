@@ -133,7 +133,7 @@ export function auditPnpmGovernance(rootPaths, options = {}, pnpmRuntime = inspe
   const auditedProjects = discovery.projectRoots
     .map((rootPath) => auditProjectRoot(rootPath, options, pnpmRuntime))
     .sort((left, right) => left.rootPath.localeCompare(right.rootPath));
-  const projects = collapseWorkspaceMembers(auditedProjects);
+  const projects = attachProjectTopology(collapseWorkspaceMembers(auditedProjects));
 
   return {
     pnpmRuntime,
@@ -146,7 +146,7 @@ export function auditPnpmGovernance(rootPaths, options = {}, pnpmRuntime = inspe
 }
 
 function discoverProjectRoots(rootPaths, options) {
-  const discovered = new Set();
+  const discovered = new Map();
   const visited = new Set();
   const scanRoots = [...new Set(rootPaths.map((rootPath) => path.resolve(rootPath)))];
   const explicitScanRoots = new Set(scanRoots);
@@ -168,8 +168,9 @@ function discoverProjectRoots(rootPaths, options) {
     }
     visited.add(realCurrent);
 
-    if (containsProjectRootSentinel(current)) {
-      discovered.add(path.resolve(current));
+    const candidateInfo = getProjectRootCandidateInfo(current);
+    if (candidateInfo) {
+      discovered.set(candidateInfo.rootPath, candidateInfo);
     }
 
     let entries = [];
@@ -197,7 +198,20 @@ function discoverProjectRoots(rootPaths, options) {
     }
   }
 
-  const candidateRoots = [...discovered].sort((left, right) => left.localeCompare(right));
+  const candidateRoots = [...discovered.keys()].sort((left, right) => left.localeCompare(right));
+  const baseDecisions = new Map();
+  const acceptedRoots = new Set();
+
+  for (const candidateRoot of candidateRoots) {
+    const decision = classifyGovernanceCandidateRoot(candidateRoot, explicitScanRoots, options);
+    baseDecisions.set(candidateRoot, decision);
+    if (decision.managed) {
+      acceptedRoots.add(candidateRoot);
+    }
+  }
+
+  promoteNestedWorkspaceDomains(candidateRoots, discovered, acceptedRoots);
+
   const projectRoots = [];
   const suppressedCounts = {
     unmanagedPathCount: 0,
@@ -205,11 +219,11 @@ function discoverProjectRoots(rootPaths, options) {
   };
 
   for (const candidateRoot of candidateRoots) {
-    const decision = classifyGovernanceCandidateRoot(candidateRoot, explicitScanRoots, options);
-    if (decision.managed) {
+    if (acceptedRoots.has(candidateRoot)) {
       projectRoots.push(candidateRoot);
       continue;
     }
+    const decision = baseDecisions.get(candidateRoot);
     if (decision.reason === GOVERNANCE_DISCOVERY_REASON_UNMANAGED_PATH) {
       suppressedCounts.unmanagedPathCount += 1;
       continue;
@@ -229,13 +243,18 @@ function discoverProjectRoots(rootPaths, options) {
   };
 }
 
-function containsProjectRootSentinel(rootPath) {
-  for (const fileName of PROJECT_ROOT_SENTINELS) {
-    if (fileExists(path.join(rootPath, fileName))) {
-      return true;
-    }
+function getProjectRootCandidateInfo(rootPath) {
+  const resolvedRootPath = path.resolve(rootPath);
+  const hasPackageJson = fileExists(path.join(resolvedRootPath, PACKAGE_JSON_BASENAME));
+  const hasWorkspaceFile = fileExists(path.join(resolvedRootPath, PNPM_WORKSPACE_BASENAME));
+  if (!hasPackageJson && !hasWorkspaceFile) {
+    return null;
   }
-  return false;
+  return {
+    rootPath: resolvedRootPath,
+    hasPackageJson,
+    hasWorkspaceFile,
+  };
 }
 
 function shouldSkipGovernanceDirectory(dirName, options) {
@@ -303,6 +322,46 @@ function hasGovernanceOwnershipSignal(rootPath) {
   );
 }
 
+function promoteNestedWorkspaceDomains(candidateRoots, candidateInfoByPath, acceptedRoots) {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const candidateRoot of candidateRoots) {
+      if (acceptedRoots.has(candidateRoot)) {
+        continue;
+      }
+      const candidateInfo = candidateInfoByPath.get(candidateRoot);
+      if (!candidateInfo?.hasWorkspaceFile) {
+        continue;
+      }
+      if (!findNearestAcceptedWorkspaceAncestor(candidateRoot, acceptedRoots, candidateInfoByPath)) {
+        continue;
+      }
+      acceptedRoots.add(candidateRoot);
+      changed = true;
+    }
+  }
+}
+
+function findNearestAcceptedWorkspaceAncestor(candidateRoot, acceptedRoots, candidateInfoByPath) {
+  let nearestAncestor = null;
+  for (const acceptedRoot of acceptedRoots) {
+    if (acceptedRoot === candidateRoot) {
+      continue;
+    }
+    if (!isPathInside(candidateRoot, acceptedRoot)) {
+      continue;
+    }
+    if (!candidateInfoByPath.get(acceptedRoot)?.hasWorkspaceFile) {
+      continue;
+    }
+    if (!nearestAncestor || depthOf(acceptedRoot) > depthOf(nearestAncestor)) {
+      nearestAncestor = acceptedRoot;
+    }
+  }
+  return nearestAncestor;
+}
+
 function collapseWorkspaceMembers(projects) {
   const accepted = [];
   const monorepos = [];
@@ -311,7 +370,7 @@ function collapseWorkspaceMembers(projects) {
     const parentMonorepo = monorepos.find((candidate) =>
       isWorkspaceMemberProject(project.rootPath, candidate),
     );
-    if (parentMonorepo) {
+    if (parentMonorepo && !project.files.pnpmWorkspace) {
       continue;
     }
 
@@ -322,6 +381,52 @@ function collapseWorkspaceMembers(projects) {
   }
 
   return accepted.sort((left, right) => left.rootPath.localeCompare(right.rootPath));
+}
+
+function attachProjectTopology(projects) {
+  const withTopology = [];
+  for (const project of [...projects].sort((left, right) => depthOf(left.rootPath) - depthOf(right.rootPath))) {
+    const parentProject = findNearestAcceptedAncestorProject(project.rootPath, withTopology);
+    withTopology.push({
+      ...project,
+      topology: buildProjectTopology(project, parentProject),
+    });
+  }
+  return withTopology.sort((left, right) => left.rootPath.localeCompare(right.rootPath));
+}
+
+function findNearestAcceptedAncestorProject(projectRootPath, projects) {
+  let nearestAncestor = null;
+  for (const project of projects) {
+    if (project.rootPath === projectRootPath) {
+      continue;
+    }
+    if (!isPathInside(projectRootPath, project.rootPath)) {
+      continue;
+    }
+    if (!nearestAncestor || depthOf(project.rootPath) > depthOf(nearestAncestor.rootPath)) {
+      nearestAncestor = project;
+    }
+  }
+  return nearestAncestor;
+}
+
+function buildProjectTopology(project, parentProject) {
+  const role = parentProject ? 'nested-domain' : 'root';
+  const lineageRootPaths = parentProject
+    ? [...parentProject.topology.lineageRootPaths, project.rootPath]
+    : [project.rootPath];
+  const lineageDisplayPaths = parentProject
+    ? [...parentProject.topology.lineageDisplayPaths, project.displayPath]
+    : [project.displayPath];
+
+  return {
+    role,
+    parentRootPath: parentProject?.rootPath ?? null,
+    parentDisplayPath: parentProject?.displayPath ?? null,
+    lineageRootPaths,
+    lineageDisplayPaths,
+  };
 }
 
 function isWorkspaceMemberProject(projectRootPath, monorepoProject) {
@@ -1600,9 +1705,15 @@ function pushEqualityCheck(checks, object, fileName, property, expected, display
 function summarizeGovernance(projects, pnpmRuntime) {
   const summary = {
     projectCount: projects.length,
+    rootProjectCount: 0,
+    nestedPnpmDomainCount: 0,
     pnpmProjectCount: 0,
     pnpmSingleProjectCount: 0,
     pnpmMonorepoCount: 0,
+    standalonePnpmSingleProjectCount: 0,
+    rootPnpmMonorepoCount: 0,
+    nestedPnpmSingleProjectCount: 0,
+    nestedPnpmMonorepoCount: 0,
     nonPnpmNodeProjectCount: 0,
     passCount: 0,
     failCount: 0,
@@ -1610,6 +1721,13 @@ function summarizeGovernance(projects, pnpmRuntime) {
   };
 
   for (const project of projects) {
+    const isNestedDomain = project.topology?.role === 'nested-domain';
+    if (isNestedDomain) {
+      summary.nestedPnpmDomainCount += 1;
+    } else {
+      summary.rootProjectCount += 1;
+    }
+
     if (project.classification.isPnpmProject) {
       summary.pnpmProjectCount += 1;
     } else if (project.classification.kind === 'node-project') {
@@ -1618,9 +1736,19 @@ function summarizeGovernance(projects, pnpmRuntime) {
 
     if (project.classification.kind === 'pnpm-single-project') {
       summary.pnpmSingleProjectCount += 1;
+      if (isNestedDomain) {
+        summary.nestedPnpmSingleProjectCount += 1;
+      } else {
+        summary.standalonePnpmSingleProjectCount += 1;
+      }
     }
     if (project.classification.kind === 'pnpm-monorepo') {
       summary.pnpmMonorepoCount += 1;
+      if (isNestedDomain) {
+        summary.nestedPnpmMonorepoCount += 1;
+      } else {
+        summary.rootPnpmMonorepoCount += 1;
+      }
     }
 
     if (project.status === 'passed') {

@@ -20,8 +20,10 @@ The convention document defines the canonical policy.
 - discovers candidate project roots by looking for `package.json` or `pnpm-workspace.yaml`
 - applies managed-project discovery rules before a candidate is allowed into governance reporting
 - classifies accepted PNPM roots as `pnpm-single-project` or `pnpm-monorepo`
+- recursively promotes nested `pnpm-workspace.yaml` domains inside accepted PNPM roots, while still respecting the excluded-directory blacklist such as `node_modules` and `.pnpm`
 - validates `pnpm-workspace.yaml`, root `package.json`, lockfile presence, and project-local auth files
 - checks PNPM 11 pinning, Node.js runtime alignment, build governance, trust policy, lockfile discipline, `saveExact: true`, exact catalog versions, and workspace protocol usage
+- reports nested domains as child domains of their containing PNPM root instead of presenting them as unrelated standalone repos
 - can run as a standalone CLI that audits only PNPM governance without running IOC, malware, persistence, hosts, or firewall flows first
 
 ## Standalone execution
@@ -53,6 +55,8 @@ In machine-wide mode, a candidate project root is reported only when:
 3. the candidate root has an ownership signal such as `.git`, `.hg`, or `.svn`.
 
 This prevents installed software payloads, extension stores, caches, and vendored trees from being reported as managed projects.
+
+Nested PNPM domains are a special case: if an already accepted PNPM root contains deeper `pnpm-workspace.yaml` files, those nested domains are also audited even without their own ownership sentinel. This keeps monorepo-contained PNPM domains visible without falling open to dependency trees or vendored payloads.
 
 ## Why this differs from the IOC scan
 

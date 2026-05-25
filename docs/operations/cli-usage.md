@@ -48,6 +48,8 @@ node src/cli/scan-pnpm-governance.mjs
 
 This command also refreshes `generated/latest-pnpm-governance-scan.json`.
 
+Nested PNPM domains with their own `pnpm-workspace.yaml` are reported beneath the containing PNPM root and shown with an arrow in the governance output.
+
 Standalone PNPM governance scan for one or more explicit roots:
 
 ```bash

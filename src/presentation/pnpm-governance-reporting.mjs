@@ -22,8 +22,9 @@ export function renderPnpmGovernanceAudit(governanceAudit) {
   }
   console.log(`- Managed projects discovered: ${governanceAudit.summary.projectCount}`);
   console.log(`- PNPM projects: ${governanceAudit.summary.pnpmProjectCount}`);
-  console.log(`- Single-project PNPM repos: ${governanceAudit.summary.pnpmSingleProjectCount}`);
-  console.log(`- Monorepos: ${governanceAudit.summary.pnpmMonorepoCount}`);
+  console.log(`- Standalone single-project PNPM roots: ${governanceAudit.summary.standalonePnpmSingleProjectCount}`);
+  console.log(`- Monorepo roots: ${governanceAudit.summary.rootPnpmMonorepoCount}`);
+  console.log(`- Nested PNPM domains: ${governanceAudit.summary.nestedPnpmDomainCount}`);
   console.log(`- Node projects without PNPM governance: ${governanceAudit.summary.nonPnpmNodeProjectCount}`);
   console.log(`- Fortress passes: ${governanceAudit.summary.passCount}`);
   console.log(`- Fortress failures: ${governanceAudit.summary.failCount}`);
@@ -53,7 +54,7 @@ export function renderPnpmGovernanceAudit(governanceAudit) {
   for (const project of governanceAudit.projects) {
     const { symbol, colorName, label } = statusPresentation(project.status);
     console.log(
-      `${colorize(symbol, colorName)} ${colorize(`${project.displayPath} [${project.classification.kind}]`, colorName)}`,
+      `${colorize(symbol, colorName)} ${colorize(formatProjectHeading(project), colorName)}`,
     );
     if (project.status === 'passed') {
       const memberSuffix = project.workspaceMembers.length > 0
@@ -97,8 +98,10 @@ export function serializeGovernanceAudit(governanceAudit) {
     summary: governanceAudit.summary,
     projects: governanceAudit.projects.map((project) => ({
       rootPath: normalizeForDisplay(project.rootPath),
+      displayPath: project.displayPath,
       status: project.status,
       classification: project.classification,
+      topology: serializeProjectTopology(project.topology),
       files: {
         packageJson: project.files.packageJson ? normalizeForDisplay(project.files.packageJson) : null,
         pnpmWorkspace: project.files.pnpmWorkspace ? normalizeForDisplay(project.files.pnpmWorkspace) : null,
@@ -182,4 +185,26 @@ function summarizePassHighlights(project) {
 
 function hasOkCheck(project, property) {
   return project.checks.some((check) => check.status === 'ok' && check.property === property);
+}
+
+function formatProjectHeading(project) {
+  const lineageDisplayPaths = project.topology?.lineageDisplayPaths ?? [project.displayPath];
+  const pathLabel = lineageDisplayPaths.join(' -> ');
+  const kindLabel = project.topology?.role === 'nested-domain'
+    ? `${project.classification.kind} domain`
+    : project.classification.kind;
+  return `${pathLabel} [${kindLabel}]`;
+}
+
+function serializeProjectTopology(topology) {
+  if (!topology) {
+    return null;
+  }
+  return {
+    role: topology.role,
+    parentRootPath: topology.parentRootPath ? normalizeForDisplay(topology.parentRootPath) : null,
+    parentDisplayPath: topology.parentDisplayPath ?? null,
+    lineageRootPaths: (topology.lineageRootPaths ?? []).map((rootPath) => normalizeForDisplay(rootPath)),
+    lineageDisplayPaths: topology.lineageDisplayPaths ?? [],
+  };
 }
