@@ -305,15 +305,18 @@ const GOVERNANCE_UNMANAGED_PATH_RULES = Object.freeze([
   },
 ]);
 
-export function isGovernanceDiscoveryExcludedDirName(dirName) {
+export function isGovernanceDiscoveryExcludedDirName(dirName: string): boolean {
   return GOVERNANCE_DISCOVERY_EXCLUDED_DIR_NAMES.has(String(dirName).toLowerCase());
 }
 
-export function normalizeGovernancePathForMatching(inputPath) {
+export function normalizeGovernancePathForMatching(inputPath: string): string {
   return String(inputPath).replace(/\\/g, '/').toLowerCase();
 }
 
-export function classifyGovernanceUnmanagedPath(inputPath, platform) {
+export function classifyGovernanceUnmanagedPath(
+  inputPath: string,
+  platform: NodeJS.Platform,
+): { id: string; description: string } | null {
   const normalizedPath = normalizeGovernancePathForMatching(inputPath);
   for (const rule of GOVERNANCE_UNMANAGED_PATH_RULES) {
     if (!rule.platforms.includes(platform)) {
@@ -329,7 +332,7 @@ export function classifyGovernanceUnmanagedPath(inputPath, platform) {
   return null;
 }
 
-export function isAllowedProjectNpmrcKey(rawKey) {
+export function isAllowedProjectNpmrcKey(rawKey: string): boolean {
   const key = String(rawKey).trim();
   if (!key) {
     return false;
@@ -342,10 +345,14 @@ export function isAllowedProjectNpmrcKey(rawKey) {
   if (!registryScopedMatch) {
     return false;
   }
-  return ALLOWED_PROJECT_NPMRC_REGISTRY_KEY_SUFFIXES.has(registryScopedMatch[1]);
+  const registrySuffix = registryScopedMatch[1];
+  if (typeof registrySuffix !== 'string') {
+    return false;
+  }
+  return ALLOWED_PROJECT_NPMRC_REGISTRY_KEY_SUFFIXES.has(registrySuffix);
 }
 
-export function isForbiddenProjectTokenHelperKey(rawKey) {
+export function isForbiddenProjectTokenHelperKey(rawKey: string): boolean {
   const key = String(rawKey).trim();
   return key === 'tokenHelper' || /[:/]tokenHelper$/u.test(key);
 }

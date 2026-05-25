@@ -31,6 +31,7 @@ import { SCAN_MODE_MACHINE } from '../domain/policy';
 import {
   direntIsDirectory,
   fileExists,
+  type JsonReadResult,
   normalizeForDisplay,
   normalizeSlashes,
   readFileTextSafe,
@@ -41,14 +42,201 @@ import { commandExists, runCommand } from '../infrastructure/process-utils';
 
 const GITIGNORE_BASENAME = '.gitignore';
 const PACKAGE_JSON_BASENAME = 'package.json';
-const PROJECT_ROOT_SENTINELS = new Set([
-  PACKAGE_JSON_BASENAME,
-  PNPM_WORKSPACE_BASENAME,
-]);
 const GOVERNANCE_DISCOVERY_REASON_UNMANAGED_PATH = 'unmanaged-path';
 const GOVERNANCE_DISCOVERY_REASON_MISSING_OWNERSHIP = 'missing-ownership';
 
-export function inspectPnpmRuntime() {
+type ScanMode = typeof SCAN_MODE_MACHINE | 'project';
+type GovernanceDiscoveryReason =
+  | typeof GOVERNANCE_DISCOVERY_REASON_UNMANAGED_PATH
+  | typeof GOVERNANCE_DISCOVERY_REASON_MISSING_OWNERSHIP;
+type GovernanceCheckStatus = 'ok' | 'warning' | 'missing' | 'invalid';
+type GovernanceProjectKind = 'node-project' | 'unknown' | 'pnpm-monorepo' | 'pnpm-single-project';
+type GovernanceRepoMode = 'single-project' | 'monorepo';
+type GovernanceProjectStatus = 'passed' | 'failed' | 'warning';
+
+interface GovernanceOptions {
+  mode?: ScanMode;
+  includeTrash?: boolean;
+}
+
+interface RuntimeDetectionSuccess {
+  available: true;
+  version: string;
+}
+
+interface RuntimeDetectionFailure {
+  available: false;
+  warning: string;
+}
+
+type RuntimeDetection = RuntimeDetectionSuccess | RuntimeDetectionFailure;
+
+export interface PnpmRuntimeInfo {
+  available: boolean;
+  version: string | null;
+  major: number | null;
+  requiredMajor: number;
+  matchesRequiredMajor: boolean;
+  warning: string | null;
+}
+
+interface GovernanceDiscoveryDecision {
+  managed: boolean;
+  reason?: GovernanceDiscoveryReason;
+}
+
+interface ProjectRootCandidateInfo {
+  rootPath: string;
+  hasPackageJson: boolean;
+  hasWorkspaceFile: boolean;
+}
+
+export interface GovernanceDiscoverySummary {
+  candidateRootCount: number;
+  acceptedRootCount: number;
+  suppressedRootCount: number;
+  suppressedUnmanagedPathCount: number;
+  suppressedMissingOwnershipCount: number;
+}
+
+interface RuntimeContract extends Record<string, unknown> {
+  name?: unknown;
+  version?: unknown;
+  onFail?: unknown;
+}
+
+interface DevEnginesContract extends Record<string, unknown> {
+  runtime?: RuntimeContract;
+  packageManager?: RuntimeContract;
+}
+
+interface ManifestLike extends Record<string, unknown> {
+  packageManager?: unknown;
+  devEngines?: DevEnginesContract;
+  pnpm?: unknown;
+  name?: unknown;
+  engines?: ({ node?: unknown } & Record<string, unknown>);
+  dependencies?: Record<string, unknown>;
+  devDependencies?: Record<string, unknown>;
+  optionalDependencies?: Record<string, unknown>;
+  peerDependencies?: Record<string, unknown>;
+}
+
+interface WorkspaceConfig extends Record<string, unknown> {
+  packages?: unknown;
+}
+
+interface YamlReadResult {
+  rawText: string | null;
+  value: unknown | null;
+}
+
+export interface GovernanceCheck {
+  file: string;
+  property: string;
+  status: GovernanceCheckStatus;
+  expected: string | null;
+  actual: string | null;
+  message: string;
+}
+
+interface GovernanceCheckInput {
+  file: string;
+  property: string;
+  status: GovernanceCheckStatus;
+  expected?: string | null;
+  actual?: string | null;
+  message: string;
+}
+
+export interface GovernanceProjectSummary {
+  okCount: number;
+  warningCount: number;
+  missingCount: number;
+  invalidCount: number;
+}
+
+export interface GovernanceProjectClassification {
+  kind: GovernanceProjectKind;
+  isPnpmProject: boolean;
+  signals: string[];
+  repoMode: GovernanceRepoMode;
+}
+
+export interface GovernanceWorkspaceMember {
+  rootPath: string;
+  packageJson: JsonReadResult;
+}
+
+export interface GovernanceProjectTopology {
+  role: 'root' | 'nested-domain';
+  parentRootPath: string | null;
+  parentDisplayPath: string | null;
+  lineageRootPaths: string[];
+  lineageDisplayPaths: string[];
+}
+
+export interface GovernanceProjectFiles {
+  packageJson: string | null;
+  pnpmWorkspace: string | null;
+  pnpmLockfile: string | null;
+  npmrc: string | null;
+  authIni: string | null;
+  gitignore: string | null;
+}
+
+export interface GovernanceProjectReport {
+  rootPath: string;
+  displayPath: string;
+  classification: GovernanceProjectClassification;
+  files: GovernanceProjectFiles;
+  checks: GovernanceCheck[];
+  workspaceMembers: GovernanceWorkspaceMember[];
+  status: GovernanceProjectStatus;
+  summary: GovernanceProjectSummary;
+  topology?: GovernanceProjectTopology;
+}
+
+export interface GovernanceAuditSummary {
+  projectCount: number;
+  rootProjectCount: number;
+  nestedPnpmDomainCount: number;
+  pnpmProjectCount: number;
+  pnpmSingleProjectCount: number;
+  pnpmMonorepoCount: number;
+  standalonePnpmSingleProjectCount: number;
+  rootPnpmMonorepoCount: number;
+  nestedPnpmSingleProjectCount: number;
+  nestedPnpmMonorepoCount: number;
+  nonPnpmNodeProjectCount: number;
+  passCount: number;
+  failCount: number;
+  warningCount: number;
+  machineWarning: string | null;
+}
+
+export interface GovernanceAudit {
+  pnpmRuntime: PnpmRuntimeInfo;
+  nodeLtsFloor: typeof CURRENT_NODE_LTS;
+  recommendedProperties: readonly string[];
+  discovery: GovernanceDiscoverySummary;
+  projects: GovernanceProjectReport[];
+  summary: GovernanceAuditSummary;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function toManifest(value: unknown): ManifestLike | null {
+  return isObjectRecord(value) ? value : null;
+}
+
+function toWorkspaceConfig(value: unknown): WorkspaceConfig | null {
+  return isObjectRecord(value) ? value : null;
+}
+
+export function inspectPnpmRuntime(): PnpmRuntimeInfo {
   const runtime = detectPnpmRuntimeVersion();
   if (!runtime.available) {
     return {
@@ -76,7 +264,7 @@ export function inspectPnpmRuntime() {
   };
 }
 
-function detectPnpmRuntimeVersion() {
+function detectPnpmRuntimeVersion(): RuntimeDetection {
   const candidates = process.platform === 'win32'
     ? [
         { command: 'cmd.exe', args: ['/d', '/s', '/c', 'pnpm --version'] },
@@ -110,7 +298,7 @@ function detectPnpmRuntimeVersion() {
   };
 }
 
-function extractSemverFromText(text) {
+function extractSemverFromText(text: string): string | null {
   for (const rawLine of String(text).split(/\r?\n/u)) {
     const line = rawLine.trim();
     if (!line) {
@@ -128,7 +316,11 @@ function extractSemverFromText(text) {
   return null;
 }
 
-export function auditPnpmGovernance(rootPaths, options = {}, pnpmRuntime = inspectPnpmRuntime()) {
+export function auditPnpmGovernance(
+  rootPaths: readonly string[],
+  options: GovernanceOptions = {},
+  pnpmRuntime: PnpmRuntimeInfo = inspectPnpmRuntime(),
+): GovernanceAudit {
   const discovery = discoverProjectRoots(rootPaths, options);
   const auditedProjects = discovery.projectRoots
     .map((rootPath) => auditProjectRoot(rootPath, options, pnpmRuntime))
@@ -145,15 +337,21 @@ export function auditPnpmGovernance(rootPaths, options = {}, pnpmRuntime = inspe
   };
 }
 
-function discoverProjectRoots(rootPaths, options) {
-  const discovered = new Map();
-  const visited = new Set();
+function discoverProjectRoots(
+  rootPaths: readonly string[],
+  options: GovernanceOptions,
+): { projectRoots: string[]; summary: GovernanceDiscoverySummary } {
+  const discovered = new Map<string, ProjectRootCandidateInfo>();
+  const visited = new Set<string>();
   const scanRoots = [...new Set(rootPaths.map((rootPath) => path.resolve(rootPath)))];
   const explicitScanRoots = new Set(scanRoots);
-  const stack = [...scanRoots];
+  const stack: string[] = [...scanRoots];
 
   while (stack.length > 0) {
     const current = stack.pop();
+    if (typeof current !== 'string') {
+      continue;
+    }
     const currentStats = statSafe(current);
     if (!currentStats?.isDirectory()) {
       continue;
@@ -199,8 +397,8 @@ function discoverProjectRoots(rootPaths, options) {
   }
 
   const candidateRoots = [...discovered.keys()].sort((left, right) => left.localeCompare(right));
-  const baseDecisions = new Map();
-  const acceptedRoots = new Set();
+  const baseDecisions = new Map<string, GovernanceDiscoveryDecision>();
+  const acceptedRoots = new Set<string>();
 
   for (const candidateRoot of candidateRoots) {
     const decision = classifyGovernanceCandidateRoot(candidateRoot, explicitScanRoots, options);
@@ -212,7 +410,7 @@ function discoverProjectRoots(rootPaths, options) {
 
   promoteNestedWorkspaceDomains(candidateRoots, discovered, acceptedRoots);
 
-  const projectRoots = [];
+  const projectRoots: string[] = [];
   const suppressedCounts = {
     unmanagedPathCount: 0,
     missingOwnershipCount: 0,
@@ -224,7 +422,7 @@ function discoverProjectRoots(rootPaths, options) {
       continue;
     }
     const decision = baseDecisions.get(candidateRoot);
-    if (decision.reason === GOVERNANCE_DISCOVERY_REASON_UNMANAGED_PATH) {
+    if (decision?.reason === GOVERNANCE_DISCOVERY_REASON_UNMANAGED_PATH) {
       suppressedCounts.unmanagedPathCount += 1;
       continue;
     }
@@ -243,7 +441,7 @@ function discoverProjectRoots(rootPaths, options) {
   };
 }
 
-function getProjectRootCandidateInfo(rootPath) {
+function getProjectRootCandidateInfo(rootPath: string): ProjectRootCandidateInfo | null {
   const resolvedRootPath = path.resolve(rootPath);
   const hasPackageJson = fileExists(path.join(resolvedRootPath, PACKAGE_JSON_BASENAME));
   const hasWorkspaceFile = fileExists(path.join(resolvedRootPath, PNPM_WORKSPACE_BASENAME));
@@ -257,7 +455,7 @@ function getProjectRootCandidateInfo(rootPath) {
   };
 }
 
-function shouldSkipGovernanceDirectory(dirName, options) {
+function shouldSkipGovernanceDirectory(dirName: string, options: GovernanceOptions): boolean {
   const lowered = String(dirName).toLowerCase();
   if (isGovernanceDiscoveryExcludedDirName(lowered)) {
     return true;
@@ -272,7 +470,11 @@ function shouldSkipGovernanceDirectory(dirName, options) {
   return false;
 }
 
-function shouldSkipGovernancePath(fullPath, options, explicitScanRoots) {
+function shouldSkipGovernancePath(
+  fullPath: string,
+  options: GovernanceOptions,
+  explicitScanRoots: ReadonlySet<string>,
+): boolean {
   if (options.mode !== SCAN_MODE_MACHINE) {
     return false;
   }
@@ -286,7 +488,11 @@ function shouldSkipGovernancePath(fullPath, options, explicitScanRoots) {
   return Boolean(classifyGovernanceUnmanagedPath(resolvedPath, process.platform));
 }
 
-function classifyGovernanceCandidateRoot(rootPath, explicitScanRoots, options) {
+function classifyGovernanceCandidateRoot(
+  rootPath: string,
+  explicitScanRoots: ReadonlySet<string>,
+  options: GovernanceOptions,
+): GovernanceDiscoveryDecision {
   if (options.mode === SCAN_MODE_MACHINE) {
     if (hasGovernanceOwnershipSignal(rootPath)) {
       return {
@@ -316,13 +522,17 @@ function classifyGovernanceCandidateRoot(rootPath, explicitScanRoots, options) {
   };
 }
 
-function hasGovernanceOwnershipSignal(rootPath) {
+function hasGovernanceOwnershipSignal(rootPath: string): boolean {
   return GOVERNANCE_OWNER_SENTINEL_BASENAMES.some((basename) =>
     fileExists(path.join(rootPath, basename)),
   );
 }
 
-function promoteNestedWorkspaceDomains(candidateRoots, candidateInfoByPath, acceptedRoots) {
+function promoteNestedWorkspaceDomains(
+  candidateRoots: readonly string[],
+  candidateInfoByPath: ReadonlyMap<string, ProjectRootCandidateInfo>,
+  acceptedRoots: Set<string>,
+): void {
   let changed = true;
   while (changed) {
     changed = false;
@@ -343,7 +553,11 @@ function promoteNestedWorkspaceDomains(candidateRoots, candidateInfoByPath, acce
   }
 }
 
-function findNearestAcceptedWorkspaceAncestor(candidateRoot, acceptedRoots, candidateInfoByPath) {
+function findNearestAcceptedWorkspaceAncestor(
+  candidateRoot: string,
+  acceptedRoots: ReadonlySet<string>,
+  candidateInfoByPath: ReadonlyMap<string, ProjectRootCandidateInfo>,
+): string | null {
   let nearestAncestor = null;
   for (const acceptedRoot of acceptedRoots) {
     if (acceptedRoot === candidateRoot) {
@@ -362,9 +576,9 @@ function findNearestAcceptedWorkspaceAncestor(candidateRoot, acceptedRoots, cand
   return nearestAncestor;
 }
 
-function collapseWorkspaceMembers(projects) {
-  const accepted = [];
-  const monorepos = [];
+function collapseWorkspaceMembers(projects: readonly GovernanceProjectReport[]): GovernanceProjectReport[] {
+  const accepted: GovernanceProjectReport[] = [];
+  const monorepos: GovernanceProjectReport[] = [];
 
   for (const project of [...projects].sort((left, right) => depthOf(left.rootPath) - depthOf(right.rootPath))) {
     const parentMonorepo = monorepos.find((candidate) =>
@@ -383,8 +597,8 @@ function collapseWorkspaceMembers(projects) {
   return accepted.sort((left, right) => left.rootPath.localeCompare(right.rootPath));
 }
 
-function attachProjectTopology(projects) {
-  const withTopology = [];
+function attachProjectTopology(projects: readonly GovernanceProjectReport[]): GovernanceProjectReport[] {
+  const withTopology: GovernanceProjectReport[] = [];
   for (const project of [...projects].sort((left, right) => depthOf(left.rootPath) - depthOf(right.rootPath))) {
     const parentProject = findNearestAcceptedAncestorProject(project.rootPath, withTopology);
     withTopology.push({
@@ -395,8 +609,11 @@ function attachProjectTopology(projects) {
   return withTopology.sort((left, right) => left.rootPath.localeCompare(right.rootPath));
 }
 
-function findNearestAcceptedAncestorProject(projectRootPath, projects) {
-  let nearestAncestor = null;
+function findNearestAcceptedAncestorProject(
+  projectRootPath: string,
+  projects: readonly GovernanceProjectReport[],
+): GovernanceProjectReport | null {
+  let nearestAncestor: GovernanceProjectReport | null = null;
   for (const project of projects) {
     if (project.rootPath === projectRootPath) {
       continue;
@@ -411,13 +628,17 @@ function findNearestAcceptedAncestorProject(projectRootPath, projects) {
   return nearestAncestor;
 }
 
-function buildProjectTopology(project, parentProject) {
+function buildProjectTopology(
+  project: GovernanceProjectReport,
+  parentProject: GovernanceProjectReport | null,
+): GovernanceProjectTopology {
   const role = parentProject ? 'nested-domain' : 'root';
-  const lineageRootPaths = parentProject
-    ? [...parentProject.topology.lineageRootPaths, project.rootPath]
+  const parentTopology = parentProject?.topology;
+  const lineageRootPaths = parentTopology
+    ? [...parentTopology.lineageRootPaths, project.rootPath]
     : [project.rootPath];
-  const lineageDisplayPaths = parentProject
-    ? [...parentProject.topology.lineageDisplayPaths, project.displayPath]
+  const lineageDisplayPaths = parentTopology
+    ? [...parentTopology.lineageDisplayPaths, project.displayPath]
     : [project.displayPath];
 
   return {
@@ -429,14 +650,18 @@ function buildProjectTopology(project, parentProject) {
   };
 }
 
-function isWorkspaceMemberProject(projectRootPath, monorepoProject) {
+function isWorkspaceMemberProject(projectRootPath: string, monorepoProject: GovernanceProjectReport): boolean {
   if (!isPathInside(projectRootPath, monorepoProject.rootPath)) {
     return false;
   }
   return (monorepoProject.workspaceMembers ?? []).some((member) => member.rootPath === projectRootPath);
 }
 
-function auditProjectRoot(rootPath, options, pnpmRuntime) {
+function auditProjectRoot(
+  rootPath: string,
+  _options: GovernanceOptions,
+  pnpmRuntime: PnpmRuntimeInfo,
+): GovernanceProjectReport {
   const packageJsonPath = path.join(rootPath, PACKAGE_JSON_BASENAME);
   const workspacePath = path.join(rootPath, PNPM_WORKSPACE_BASENAME);
   const pnpmLockfilePath = path.join(rootPath, PNPM_LOCKFILE_BASENAME);
@@ -446,8 +671,8 @@ function auditProjectRoot(rootPath, options, pnpmRuntime) {
 
   const packageJson = readJsonSafe(packageJsonPath);
   const workspaceDocument = readYamlSafe(workspacePath);
-  const checks = [];
-  const workspaceMembers = [];
+  const checks: GovernanceCheck[] = [];
+  const workspaceMembers: GovernanceWorkspaceMember[] = [];
 
   if (fileExists(packageJsonPath) && !packageJson.value) {
     pushCheck(checks, {
@@ -476,7 +701,8 @@ function auditProjectRoot(rootPath, options, pnpmRuntime) {
     auditProjectAuthFiles(checks, gitignorePath, [npmrcPath, authIniPath]);
 
     if (classification.kind === 'pnpm-monorepo' && workspaceDocument.value) {
-      const members = discoverWorkspaceMembers(rootPath, workspaceDocument.value.packages);
+      const workspaceConfig = toWorkspaceConfig(workspaceDocument.value);
+      const members = discoverWorkspaceMembers(rootPath, workspaceConfig?.packages);
       workspaceMembers.push(...members);
       auditWorkspaceMembers(checks, rootPath, members, packageJson.value);
     }
@@ -509,13 +735,19 @@ function auditProjectRoot(rootPath, options, pnpmRuntime) {
   };
 }
 
-function classifyProject(rootPath, packageJson, workspaceDocument, pnpmLockfilePath) {
-  const signals = [];
+function classifyProject(
+  rootPath: string,
+  packageJson: unknown,
+  workspaceDocument: YamlReadResult,
+  pnpmLockfilePath: string,
+): GovernanceProjectClassification {
+  const signals: string[] = [];
   const workspaceRawText = workspaceDocument.rawText ?? '';
+  const manifest = toManifest(packageJson);
   const hasWorkspaceFile = fileExists(path.join(rootPath, PNPM_WORKSPACE_BASENAME));
   const hasPackageJson = fileExists(path.join(rootPath, PACKAGE_JSON_BASENAME));
-  const packageManagerField = typeof packageJson?.packageManager === 'string' ? packageJson.packageManager : null;
-  const devEnginePackageManager = packageJson?.devEngines?.packageManager;
+  const packageManagerField = typeof manifest?.packageManager === 'string' ? manifest.packageManager : null;
+  const devEnginePackageManager = manifest?.devEngines?.packageManager;
   const hasPnpmLockfile = fileExists(pnpmLockfilePath);
 
   if (hasWorkspaceFile) {
@@ -541,7 +773,7 @@ function classifyProject(rootPath, packageJson, workspaceDocument, pnpmLockfileP
     };
   }
 
-  const workspaceValue = workspaceDocument.value;
+  const workspaceValue = toWorkspaceConfig(workspaceDocument.value);
   const looksLikeMonorepo = Array.isArray(workspaceValue?.packages)
     || workspaceRawText.includes('\npackages:')
     || workspaceRawText.startsWith('packages:');
@@ -554,7 +786,7 @@ function classifyProject(rootPath, packageJson, workspaceDocument, pnpmLockfileP
   };
 }
 
-function auditPnpmRuntime(checks, pnpmRuntime) {
+function auditPnpmRuntime(checks: GovernanceCheck[], pnpmRuntime: PnpmRuntimeInfo): void {
   if (!pnpmRuntime.available) {
     pushCheck(checks, {
       file: 'machine',
@@ -562,7 +794,7 @@ function auditPnpmRuntime(checks, pnpmRuntime) {
       status: 'warning',
       expected: `pnpm ${REQUIRED_PNPM_MAJOR}.x installed`,
       actual: 'missing',
-      message: pnpmRuntime.warning,
+      message: pnpmRuntime.warning ?? `pnpm ${REQUIRED_PNPM_MAJOR}.x is not installed on this machine.`,
     });
     return;
   }
@@ -575,11 +807,15 @@ function auditPnpmRuntime(checks, pnpmRuntime) {
     actual: pnpmRuntime.version ?? 'unknown',
     message: pnpmRuntime.matchesRequiredMajor
       ? `pnpm ${pnpmRuntime.version} is installed on this machine.`
-      : pnpmRuntime.warning,
+      : pnpmRuntime.warning ?? `pnpm ${REQUIRED_PNPM_MAJOR}.x is required on this machine.`,
   });
 }
 
-function auditWorkspaceFile(checks, classification, workspaceDocument) {
+function auditWorkspaceFile(
+  checks: GovernanceCheck[],
+  classification: GovernanceProjectClassification,
+  workspaceDocument: YamlReadResult,
+): void {
   if (!workspaceDocument.value) {
     if (!workspaceDocument.rawText) {
       pushCheck(checks, {
@@ -592,9 +828,15 @@ function auditWorkspaceFile(checks, classification, workspaceDocument) {
     return;
   }
 
-  const workspace = workspaceDocument.value;
+  const workspace = toWorkspaceConfig(workspaceDocument.value);
+  if (!workspace) {
+    return;
+  }
 
   for (const [property, expected] of SHARED_WORKSPACE_EXACT_RULES) {
+    if (typeof property !== 'string') {
+      continue;
+    }
     if (property === 'minimumReleaseAge') {
       auditNumericMinimum(checks, workspace, PNPM_WORKSPACE_BASENAME, property, 10080, '10080 or stronger');
       continue;
@@ -671,6 +913,9 @@ function auditWorkspaceFile(checks, classification, workspaceDocument) {
   }
 
   for (const [property, expected] of MONOREPO_WORKSPACE_EXACT_RULES) {
+    if (typeof property !== 'string') {
+      continue;
+    }
     pushEqualityCheck(checks, workspace, PNPM_WORKSPACE_BASENAME, property, expected);
   }
   for (const property of MONOREPO_WORKSPACE_ARRAY_RULES) {
@@ -682,7 +927,11 @@ function auditWorkspaceFile(checks, classification, workspaceDocument) {
   }
 }
 
-function auditRootPackageJson(checks, packageJson, classification) {
+function auditRootPackageJson(
+  checks: GovernanceCheck[],
+  packageJson: JsonReadResult,
+  classification: GovernanceProjectClassification,
+): void {
   if (!packageJson.rawText) {
     pushCheck(checks, {
       file: PACKAGE_JSON_BASENAME,
@@ -697,7 +946,10 @@ function auditRootPackageJson(checks, packageJson, classification) {
     return;
   }
 
-  const manifest = packageJson.value;
+  const manifest = toManifest(packageJson.value);
+  if (!manifest) {
+    return;
+  }
   auditPackageManagerField(checks, manifest);
   auditEnginesNode(checks, manifest);
   auditDevRuntime(checks, manifest);
@@ -731,7 +983,7 @@ function auditRootPackageJson(checks, packageJson, classification) {
   }
 }
 
-function auditPackageManagerField(checks, manifest) {
+function auditPackageManagerField(checks: GovernanceCheck[], manifest: ManifestLike): void {
   const rawValue = manifest.packageManager;
   if (typeof rawValue !== 'string') {
     pushCheck(checks, {
@@ -757,7 +1009,8 @@ function auditPackageManagerField(checks, manifest) {
     return;
   }
 
-  const version = semver.coerce(match[1])?.version ?? null;
+  const matchedVersion = match[1];
+  const version = typeof matchedVersion === 'string' ? semver.coerce(matchedVersion)?.version ?? null : null;
   if (!version || semver.major(version) !== REQUIRED_PNPM_MAJOR) {
     pushCheck(checks, {
       file: PACKAGE_JSON_BASENAME,
@@ -780,7 +1033,7 @@ function auditPackageManagerField(checks, manifest) {
   });
 }
 
-function auditEnginesNode(checks, manifest) {
+function auditEnginesNode(checks: GovernanceCheck[], manifest: ManifestLike): void {
   const enginesNode = manifest?.engines?.node;
   if (typeof enginesNode !== 'string') {
     pushCheck(checks, {
@@ -816,7 +1069,7 @@ function auditEnginesNode(checks, manifest) {
   });
 }
 
-function auditDevRuntime(checks, manifest) {
+function auditDevRuntime(checks: GovernanceCheck[], manifest: ManifestLike): void {
   const runtime = manifest?.devEngines?.runtime;
   if (!runtime || typeof runtime !== 'object') {
     pushCheck(checks, {
@@ -883,7 +1136,7 @@ function auditDevRuntime(checks, manifest) {
   pushEqualityCheck(checks, runtime, PACKAGE_JSON_BASENAME, 'onFail', 'error', 'devEngines.runtime.onFail');
 }
 
-function auditDevPackageManager(checks, manifest) {
+function auditDevPackageManager(checks: GovernanceCheck[], manifest: ManifestLike): void {
   const packageManager = manifest?.devEngines?.packageManager;
   if (!packageManager || typeof packageManager !== 'object') {
     pushCheck(checks, {
@@ -950,7 +1203,7 @@ function auditDevPackageManager(checks, manifest) {
   pushEqualityCheck(checks, packageManager, PACKAGE_JSON_BASENAME, 'onFail', 'error', 'devEngines.packageManager.onFail');
 }
 
-function auditLockfile(checks, pnpmLockfilePath) {
+function auditLockfile(checks: GovernanceCheck[], pnpmLockfilePath: string): void {
   if (!fileExists(pnpmLockfilePath)) {
     pushCheck(checks, {
       file: PNPM_LOCKFILE_BASENAME,
@@ -969,7 +1222,11 @@ function auditLockfile(checks, pnpmLockfilePath) {
   });
 }
 
-function auditProjectAuthFiles(checks, gitignorePath, authFilePaths) {
+function auditProjectAuthFiles(
+  checks: GovernanceCheck[],
+  gitignorePath: string,
+  authFilePaths: readonly string[],
+): void {
   const gitignorePatterns = readGitignorePatterns(gitignorePath);
   for (const authFilePath of authFilePaths) {
     if (!fileExists(authFilePath)) {
@@ -1051,7 +1308,12 @@ function auditProjectAuthFiles(checks, gitignorePath, authFilePaths) {
   }
 }
 
-function auditWorkspaceMembers(checks, rootPath, members, rootPackageJson) {
+function auditWorkspaceMembers(
+  checks: GovernanceCheck[],
+  rootPath: string,
+  members: readonly GovernanceWorkspaceMember[],
+  rootPackageJson: unknown,
+): void {
   if (members.length === 0) {
     pushCheck(checks, {
       file: PNPM_WORKSPACE_BASENAME,
@@ -1062,15 +1324,16 @@ function auditWorkspaceMembers(checks, rootPath, members, rootPackageJson) {
     return;
   }
 
-  const workspaceNameToRoot = new Map();
+  const workspaceNameToRoot = new Map<string, string>();
   for (const member of members) {
-    if (member.packageJson?.value?.name) {
-      workspaceNameToRoot.set(member.packageJson.value.name, member.rootPath);
+    const manifest = toManifest(member.packageJson.value);
+    if (typeof manifest?.name === 'string') {
+      workspaceNameToRoot.set(manifest.name, member.rootPath);
     }
   }
 
   for (const member of members) {
-    if (!member.packageJson.rawText || !member.packageJson.value) {
+    if (!member.packageJson.rawText || !toManifest(member.packageJson.value)) {
       pushCheck(checks, {
         file: normalizeForDisplay(path.join(member.rootPath, PACKAGE_JSON_BASENAME)),
         property: PACKAGE_JSON_BASENAME,
@@ -1092,15 +1355,20 @@ function auditWorkspaceMembers(checks, rootPath, members, rootPackageJson) {
       }
     }
 
-    auditWorkspaceProtocolUsage(checks, member.packageJson.value, member.rootPath, workspaceNameToRoot);
+    auditWorkspaceProtocolUsage(checks, toManifest(member.packageJson.value) ?? {}, member.rootPath, workspaceNameToRoot);
   }
 
-  if (rootPackageJson && typeof rootPackageJson === 'object') {
-    auditWorkspaceProtocolUsage(checks, rootPackageJson, rootPath, workspaceNameToRoot);
+  if (toManifest(rootPackageJson)) {
+    auditWorkspaceProtocolUsage(checks, toManifest(rootPackageJson) ?? {}, rootPath, workspaceNameToRoot);
   }
 }
 
-function auditWorkspaceProtocolUsage(checks, manifest, manifestRootPath, workspaceNameToRoot) {
+function auditWorkspaceProtocolUsage(
+  checks: GovernanceCheck[],
+  manifest: ManifestLike,
+  manifestRootPath: string,
+  workspaceNameToRoot: ReadonlyMap<string, string>,
+): void {
   for (const section of MANIFEST_DEPENDENCY_SECTIONS) {
     const dependencies = manifest?.[section];
     if (!dependencies || typeof dependencies !== 'object') {
@@ -1138,7 +1406,7 @@ function auditWorkspaceProtocolUsage(checks, manifest, manifestRootPath, workspa
   }
 }
 
-function discoverWorkspaceMembers(rootPath, workspacePatterns) {
+function discoverWorkspaceMembers(rootPath: string, workspacePatterns: unknown): GovernanceWorkspaceMember[] {
   if (!Array.isArray(workspacePatterns)) {
     return [];
   }
@@ -1149,12 +1417,15 @@ function discoverWorkspaceMembers(rootPath, workspacePatterns) {
     .filter((pattern) => pattern.startsWith('!'))
     .map((pattern) => pattern.slice(1));
 
-  const discovered = [];
-  const stack = [rootPath];
-  const visited = new Set();
+  const discovered: GovernanceWorkspaceMember[] = [];
+  const stack: string[] = [rootPath];
+  const visited = new Set<string>();
 
   while (stack.length > 0) {
     const current = stack.pop();
+    if (typeof current !== 'string') {
+      continue;
+    }
     const realCurrent = safeRealpath(current);
     if (visited.has(realCurrent)) {
       continue;
@@ -1205,7 +1476,11 @@ function discoverWorkspaceMembers(rootPath, workspacePatterns) {
   return discovered.sort((left, right) => left.rootPath.localeCompare(right.rootPath));
 }
 
-function matchesWorkspacePattern(relativeRoot, positivePatterns, negativePatterns) {
+function matchesWorkspacePattern(
+  relativeRoot: string,
+  positivePatterns: readonly string[],
+  negativePatterns: readonly string[],
+): boolean {
   if (positivePatterns.length === 0) {
     return false;
   }
@@ -1216,7 +1491,7 @@ function matchesWorkspacePattern(relativeRoot, positivePatterns, negativePattern
   return !negativePatterns.some((pattern) => minimatch(relativeRoot, pattern, { dot: true }));
 }
 
-function readYamlSafe(filePath) {
+function readYamlSafe(filePath: string): YamlReadResult {
   if (!fileExists(filePath)) {
     return {
       rawText: null,
@@ -1238,7 +1513,7 @@ function readYamlSafe(filePath) {
   }
 }
 
-function readTextOrNull(filePath) {
+function readTextOrNull(filePath: string): string | null {
   try {
     return readFileTextSafe(filePath);
   } catch {
@@ -1246,7 +1521,7 @@ function readTextOrNull(filePath) {
   }
 }
 
-function readGitignorePatterns(gitignorePath) {
+function readGitignorePatterns(gitignorePath: string): string[] {
   if (!fileExists(gitignorePath)) {
     return [];
   }
@@ -1260,14 +1535,14 @@ function readGitignorePatterns(gitignorePath) {
   }
 }
 
-function isAuthFileGitignored(basename, patterns) {
+function isAuthFileGitignored(basename: string, patterns: readonly string[]): boolean {
   return patterns.some((pattern) => {
     const normalizedPattern = pattern.replace(/\\/g, '/');
     return normalizedPattern === basename || normalizedPattern === `/${basename}`;
   });
 }
 
-function parseNpmrcKeys(filePath) {
+function parseNpmrcKeys(filePath: string): Array<{ key: string }> {
   let text = '';
   try {
     text = readFileTextSafe(filePath);
@@ -1288,7 +1563,14 @@ function parseNpmrcKeys(filePath) {
     .filter((entry) => entry.key);
 }
 
-function auditNumericMinimum(checks, object, fileName, property, minimumExpected, expectedLabel) {
+function auditNumericMinimum(
+  checks: GovernanceCheck[],
+  object: Record<string, unknown>,
+  fileName: string,
+  property: string,
+  minimumExpected: number,
+  expectedLabel: string,
+): void {
   const actual = getNestedValue(object, property);
   if (typeof actual !== 'number') {
     pushCheck(checks, {
@@ -1324,7 +1606,14 @@ function auditNumericMinimum(checks, object, fileName, property, minimumExpected
   });
 }
 
-function auditNumericMaximum(checks, object, fileName, property, maximumExpected, expectedLabel) {
+function auditNumericMaximum(
+  checks: GovernanceCheck[],
+  object: Record<string, unknown>,
+  fileName: string,
+  property: string,
+  maximumExpected: number,
+  expectedLabel: string,
+): void {
   const actual = getNestedValue(object, property);
   if (typeof actual !== 'number') {
     pushCheck(checks, {
@@ -1360,7 +1649,13 @@ function auditNumericMaximum(checks, object, fileName, property, maximumExpected
   });
 }
 
-function auditExactSemverFloor(checks, object, fileName, property, minimumVersion) {
+function auditExactSemverFloor(
+  checks: GovernanceCheck[],
+  object: Record<string, unknown>,
+  fileName: string,
+  property: string,
+  minimumVersion: string,
+): void {
   const actual = getNestedValue(object, property);
   const valid = typeof actual === 'string' ? semver.valid(actual) : null;
   if (!valid) {
@@ -1397,7 +1692,12 @@ function auditExactSemverFloor(checks, object, fileName, property, minimumVersio
   });
 }
 
-function auditHttpsRegistry(checks, object, fileName, property) {
+function auditHttpsRegistry(
+  checks: GovernanceCheck[],
+  object: Record<string, unknown>,
+  fileName: string,
+  property: string,
+): void {
   const actual = getNestedValue(object, property);
   if (typeof actual !== 'string') {
     pushCheck(checks, {
@@ -1439,7 +1739,12 @@ function auditHttpsRegistry(checks, object, fileName, property) {
   });
 }
 
-function auditEmptyArray(checks, object, fileName, property) {
+function auditEmptyArray(
+  checks: GovernanceCheck[],
+  object: Record<string, unknown>,
+  fileName: string,
+  property: string,
+): void {
   const actual = getNestedValue(object, property);
   if (!Array.isArray(actual)) {
     pushCheck(checks, {
@@ -1475,7 +1780,12 @@ function auditEmptyArray(checks, object, fileName, property) {
   });
 }
 
-function auditNonEmptyArray(checks, object, fileName, property) {
+function auditNonEmptyArray(
+  checks: GovernanceCheck[],
+  object: Record<string, unknown>,
+  fileName: string,
+  property: string,
+): void {
   const actual = getNestedValue(object, property);
   if (!Array.isArray(actual)) {
     pushCheck(checks, {
@@ -1511,7 +1821,12 @@ function auditNonEmptyArray(checks, object, fileName, property) {
   });
 }
 
-function auditArraySurface(checks, object, fileName, property) {
+function auditArraySurface(
+  checks: GovernanceCheck[],
+  object: Record<string, unknown>,
+  fileName: string,
+  property: string,
+): void {
   const actual = getNestedValue(object, property);
   if (!Array.isArray(actual)) {
     pushCheck(checks, {
@@ -1535,7 +1850,12 @@ function auditArraySurface(checks, object, fileName, property) {
   });
 }
 
-function auditEmptyObject(checks, object, fileName, property) {
+function auditEmptyObject(
+  checks: GovernanceCheck[],
+  object: Record<string, unknown>,
+  fileName: string,
+  property: string,
+): void {
   const actual = getNestedValue(object, property);
   if (!isPlainObject(actual)) {
     pushCheck(checks, {
@@ -1571,7 +1891,12 @@ function auditEmptyObject(checks, object, fileName, property) {
   });
 }
 
-function auditObjectSurface(checks, object, fileName, property) {
+function auditObjectSurface(
+  checks: GovernanceCheck[],
+  object: Record<string, unknown>,
+  fileName: string,
+  property: string,
+): void {
   const actual = getNestedValue(object, property);
   if (!isPlainObject(actual)) {
     pushCheck(checks, {
@@ -1595,7 +1920,7 @@ function auditObjectSurface(checks, object, fileName, property) {
   });
 }
 
-function auditAllowBuildsSurface(checks, workspace) {
+function auditAllowBuildsSurface(checks: GovernanceCheck[], workspace: Record<string, unknown>): void {
   const actual = getNestedValue(workspace, 'allowBuilds');
   if (!isPlainObject(actual)) {
     pushCheck(checks, {
@@ -1632,7 +1957,7 @@ function auditAllowBuildsSurface(checks, workspace) {
   });
 }
 
-function auditCatalogExactVersions(checks, workspace) {
+function auditCatalogExactVersions(checks: GovernanceCheck[], workspace: Record<string, unknown>): void {
   const catalog = getNestedValue(workspace, 'catalog');
   if (!isPlainObject(catalog)) {
     return;
@@ -1667,7 +1992,14 @@ function auditCatalogExactVersions(checks, workspace) {
   });
 }
 
-function pushEqualityCheck(checks, object, fileName, property, expected, displayProperty = property) {
+function pushEqualityCheck(
+  checks: GovernanceCheck[],
+  object: Record<string, unknown>,
+  fileName: string,
+  property: string,
+  expected: unknown,
+  displayProperty = property,
+): void {
   const actual = getNestedValue(object, property);
   if (actual === undefined) {
     pushCheck(checks, {
@@ -1702,8 +2034,11 @@ function pushEqualityCheck(checks, object, fileName, property, expected, display
   });
 }
 
-function summarizeGovernance(projects, pnpmRuntime) {
-  const summary = {
+function summarizeGovernance(
+  projects: readonly GovernanceProjectReport[],
+  pnpmRuntime: PnpmRuntimeInfo,
+): GovernanceAuditSummary {
+  const summary: GovernanceAuditSummary = {
     projectCount: projects.length,
     rootProjectCount: 0,
     nestedPnpmDomainCount: 0,
@@ -1718,6 +2053,7 @@ function summarizeGovernance(projects, pnpmRuntime) {
     passCount: 0,
     failCount: 0,
     warningCount: 0,
+    machineWarning: null,
   };
 
   for (const project of projects) {
@@ -1764,7 +2100,7 @@ function summarizeGovernance(projects, pnpmRuntime) {
   return summary;
 }
 
-function summarizeProjectChecks(checks) {
+function summarizeProjectChecks(checks: readonly GovernanceCheck[]): GovernanceProjectSummary {
   return checks.reduce(
     (summary, check) => {
       if (check.status === 'ok') {
@@ -1787,7 +2123,10 @@ function summarizeProjectChecks(checks) {
   );
 }
 
-function classifyAuditStatus(classification, summary) {
+function classifyAuditStatus(
+  classification: GovernanceProjectClassification,
+  summary: GovernanceProjectSummary,
+): GovernanceProjectStatus {
   if (!classification.isPnpmProject) {
     return 'warning';
   }
@@ -1800,7 +2139,7 @@ function classifyAuditStatus(classification, summary) {
   return 'passed';
 }
 
-function pushCheck(checks, check) {
+function pushCheck(checks: GovernanceCheck[], check: GovernanceCheckInput): void {
   checks.push({
     file: check.file,
     property: check.property,
@@ -1811,17 +2150,22 @@ function pushCheck(checks, check) {
   });
 }
 
-function getNestedValue(target, propertyPath) {
-  return String(propertyPath)
-    .split('.')
-    .reduce((current, key) => (current == null ? undefined : current[key]), target);
+function getNestedValue(target: Record<string, unknown>, propertyPath: string): unknown {
+  let current: unknown = target;
+  for (const key of String(propertyPath).split('.')) {
+    if (!isObjectRecord(current)) {
+      return undefined;
+    }
+    current = current[key];
+  }
+  return current;
 }
 
-function isPlainObject(value) {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function isCanonicalExactSemverString(value) {
+function isCanonicalExactSemverString(value: unknown): boolean {
   if (typeof value !== 'string') {
     return false;
   }
@@ -1829,7 +2173,7 @@ function isCanonicalExactSemverString(value) {
   return trimmed.length > 0 && semver.valid(trimmed) === trimmed;
 }
 
-function formatValue(value) {
+function formatValue(value: unknown): string {
   if (value === undefined) {
     return 'unset';
   }
@@ -1839,7 +2183,7 @@ function formatValue(value) {
   return JSON.stringify(value);
 }
 
-function safeRealpath(fullPath) {
+function safeRealpath(fullPath: string): string {
   try {
     return fs.realpathSync.native(fullPath);
   } catch {
@@ -1847,7 +2191,7 @@ function safeRealpath(fullPath) {
   }
 }
 
-function isDirectorySymlink(fullPath) {
+function isDirectorySymlink(fullPath: string): boolean {
   try {
     return fs.lstatSync(fullPath).isSymbolicLink() && Boolean(statSafe(fullPath)?.isDirectory());
   } catch {
@@ -1855,11 +2199,11 @@ function isDirectorySymlink(fullPath) {
   }
 }
 
-function isPathInside(candidatePath, ancestorPath) {
+function isPathInside(candidatePath: string, ancestorPath: string): boolean {
   const relative = path.relative(ancestorPath, candidatePath);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-function depthOf(fullPath) {
+function depthOf(fullPath: string): number {
   return path.resolve(fullPath).split(path.sep).length;
 }

@@ -19,9 +19,189 @@ const SPLIT_CANDIDATE_FILES_THRESHOLD = 500;
 const SPLIT_NODE_MODULES_THRESHOLD = 250;
 const SPLIT_WORK_UNITS_THRESHOLD = 15_000;
 
-export async function buildPreflightPlan(tasks, options = {}, reportProgress = () => {}) {
-  const mode = options.mode === PREFLIGHT_MODE_DEEP ? PREFLIGHT_MODE_DEEP : PREFLIGHT_MODE_FAST;
-  const heartbeatMs = options.heartbeatMs && options.heartbeatMs > 0
+type ScanMode = 'project' | 'machine-wide';
+type PreflightProgressModel = 'tasks' | 'weighted';
+type TraversalErrorCode = keyof TraversalErrorCounts;
+
+export type PreflightMode = typeof PREFLIGHT_MODE_FAST | typeof PREFLIGHT_MODE_DEEP;
+
+export interface TraversalErrorCounts {
+  EACCES: number;
+  EPERM: number;
+  ENOENT: number;
+  OTHER: number;
+}
+
+export interface InventorySummary {
+  directoriesVisited: number;
+  filesVisited: number;
+  candidateFilesDiscovered: number;
+  nodeModulesRootsDiscovered: number;
+}
+
+export interface PreflightTaskDescriptor {
+  id: string | number;
+  rootPath: string;
+  mode: ScanMode;
+  shallow: boolean;
+  includeTrash: boolean;
+}
+
+export interface PreflightChildPlan {
+  rootPath: string;
+  workUnits: number;
+  inventory: InventorySummary;
+}
+
+export interface PreflightTaskInventory extends InventorySummary {
+  traversalErrors: TraversalErrorCounts;
+  immediateChildren: PreflightChildPlan[];
+  rootFilesVisited: number;
+  rootCandidateFilesDiscovered: number;
+  rootNodeModulesRootsDiscovered: number;
+}
+
+export interface PreflightTaskPlan {
+  taskId: string;
+  rootPath: string;
+  mode: ScanMode;
+  shallow: boolean;
+  includeTrash: boolean;
+  workUnits: number;
+  inventory: PreflightTaskInventory | null;
+}
+
+export interface PreflightTaskPlanSummary {
+  taskId: string;
+  rootPath: string;
+  workUnits: number;
+  inventory: InventorySummary | null;
+}
+
+export interface PreflightTotals {
+  directoriesVisited: number | null;
+  filesVisited: number | null;
+  candidateFilesDiscovered: number | null;
+  nodeModulesRootsDiscovered: number | null;
+  workUnits: number;
+}
+
+export interface PreflightSplitSummary {
+  sourceTasks: number;
+  executionTasks: number;
+  splitTaskCount: number;
+}
+
+export interface PreflightPlan {
+  mode: PreflightMode;
+  totalTasks: number;
+  totals: PreflightTotals;
+  taskPlans: PreflightTaskPlan[];
+  progressModel: PreflightProgressModel;
+  heaviestTasks: PreflightTaskPlanSummary[];
+  executionTasks: PreflightTaskDescriptor[];
+  executionTaskPlans: PreflightTaskPlanSummary[];
+  splitSummary: PreflightSplitSummary;
+}
+
+export interface DeepPreflightStartedEvent {
+  phase: 'deep-preflight-started';
+  totalTasks: number;
+}
+
+export interface DeepPreflightTaskCompleteEvent {
+  phase: 'deep-preflight-task-complete';
+  completedTasks: number;
+  totalTasks: number;
+  taskPlan: PreflightTaskPlan;
+}
+
+export interface DeepPreflightHeartbeatEvent {
+  phase: 'deep-preflight-heartbeat';
+  completedTasks: number;
+  totalTasks: number;
+  currentTask: {
+    taskId: string | number;
+    rootPath: string;
+    elapsedMs: number;
+    directoriesVisited: number;
+    filesVisited: number;
+    candidateFilesDiscovered: number;
+    nodeModulesRootsDiscovered: number;
+  };
+  elapsedMs: number;
+}
+
+export type PreflightProgressEvent =
+  | DeepPreflightStartedEvent
+  | DeepPreflightTaskCompleteEvent
+  | DeepPreflightHeartbeatEvent;
+
+interface PreflightOptions {
+  mode?: PreflightMode;
+  heartbeatMs?: number;
+}
+
+interface InventoryTaskOptions {
+  heartbeatMs: number;
+  reportProgress: (event: PreflightProgressEvent) => void;
+  taskIndex: number;
+  totalTasks: number;
+  preflightStartedAt: number;
+}
+
+interface BasePreflightPlan {
+  mode: PreflightMode;
+  totalTasks: number;
+  totals: PreflightTotals;
+  taskPlans: PreflightTaskPlan[];
+  progressModel: PreflightProgressModel;
+  heaviestTasks: PreflightTaskPlanSummary[];
+}
+
+interface DeepPreflightTotals {
+  directoriesVisited: number;
+  filesVisited: number;
+  candidateFilesDiscovered: number;
+  nodeModulesRootsDiscovered: number;
+  workUnits: number;
+}
+
+interface StackEntry {
+  path: string;
+  branchRoot: string | null;
+}
+
+function createTraversalErrorCounts(): TraversalErrorCounts {
+  return {
+    EACCES: 0,
+    EPERM: 0,
+    ENOENT: 0,
+    OTHER: 0,
+  };
+}
+
+function getTraversalErrorCode(error: unknown): TraversalErrorCode {
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    const code = error['code'];
+    if (code === 'EACCES' || code === 'EPERM' || code === 'ENOENT') {
+      return code;
+    }
+  }
+  return 'OTHER';
+}
+
+function emptyProgress(): void {
+  return;
+}
+
+export async function buildPreflightPlan(
+  tasks: readonly PreflightTaskDescriptor[],
+  options: PreflightOptions = {},
+  reportProgress: (event: PreflightProgressEvent) => void = emptyProgress,
+): Promise<PreflightPlan> {
+  const mode: PreflightMode = options.mode === PREFLIGHT_MODE_DEEP ? PREFLIGHT_MODE_DEEP : PREFLIGHT_MODE_FAST;
+  const heartbeatMs = typeof options.heartbeatMs === 'number' && options.heartbeatMs > 0
     ? Math.max(1_000, options.heartbeatMs)
     : 0;
   const preflightStartedAt = Date.now();
@@ -35,8 +215,8 @@ export async function buildPreflightPlan(tasks, options = {}, reportProgress = (
     totalTasks: tasks.length,
   });
 
-  const taskPlans = [];
-  const totals = {
+  const taskPlans: PreflightTaskPlan[] = [];
+  const totals: DeepPreflightTotals = {
     directoriesVisited: 0,
     filesVisited: 0,
     candidateFilesDiscovered: 0,
@@ -46,6 +226,9 @@ export async function buildPreflightPlan(tasks, options = {}, reportProgress = (
 
   for (let index = 0; index < tasks.length; index += 1) {
     const task = tasks[index];
+    if (!task) {
+      continue;
+    }
     const inventory = inventoryTask(task, {
       heartbeatMs,
       reportProgress,
@@ -54,8 +237,8 @@ export async function buildPreflightPlan(tasks, options = {}, reportProgress = (
       preflightStartedAt,
     });
     const workUnits = computeWorkUnits(inventory);
-    const taskPlan = {
-      taskId: task.id,
+    const taskPlan: PreflightTaskPlan = {
+      taskId: String(task.id),
       rootPath: task.rootPath,
       mode: task.mode,
       shallow: task.shallow,
@@ -88,16 +271,18 @@ export async function buildPreflightPlan(tasks, options = {}, reportProgress = (
     heaviestTasks: [...taskPlans]
       .sort((left, right) => right.workUnits - left.workUnits)
       .slice(0, 5)
-      .map((taskPlan) => ({
-        taskId: taskPlan.taskId,
-        rootPath: taskPlan.rootPath,
-        workUnits: taskPlan.workUnits,
-        inventory: taskPlan.inventory,
-      })),
+      .flatMap((taskPlan) => taskPlan.inventory
+        ? [{
+            taskId: taskPlan.taskId,
+            rootPath: taskPlan.rootPath,
+            workUnits: taskPlan.workUnits,
+            inventory: taskPlan.inventory,
+          }]
+        : []),
   });
 }
 
-function buildFastPreflightPlan(tasks) {
+function buildFastPreflightPlan(tasks: readonly PreflightTaskDescriptor[]): PreflightPlan {
   return withExecutionPlan({
     mode: PREFLIGHT_MODE_FAST,
     totalTasks: tasks.length,
@@ -109,7 +294,7 @@ function buildFastPreflightPlan(tasks) {
       workUnits: tasks.length,
     },
     taskPlans: tasks.map((task) => ({
-      taskId: task.id,
+      taskId: String(task.id),
       rootPath: task.rootPath,
       mode: task.mode,
       shallow: task.shallow,
@@ -122,32 +307,30 @@ function buildFastPreflightPlan(tasks) {
   });
 }
 
-function inventoryTask(task, options) {
-  const counts = {
+function inventoryTask(task: PreflightTaskDescriptor, options: InventoryTaskOptions): PreflightTaskInventory {
+  const counts: PreflightTaskInventory = {
     directoriesVisited: 0,
     filesVisited: 0,
     candidateFilesDiscovered: 0,
     nodeModulesRootsDiscovered: 0,
-    traversalErrors: {
-      EACCES: 0,
-      EPERM: 0,
-      ENOENT: 0,
-      OTHER: 0,
-    },
+    traversalErrors: createTraversalErrorCounts(),
     immediateChildren: [],
     rootFilesVisited: 0,
     rootCandidateFilesDiscovered: 0,
     rootNodeModulesRootsDiscovered: 0,
   };
 
-  const stack = [task.rootPath];
+  const stack: Array<string | StackEntry> = [task.rootPath];
   const shallowRoot = Boolean(task.shallow);
   const taskStartedAt = Date.now();
   let lastHeartbeatAt = taskStartedAt;
-  const immediateChildStats = new Map();
+  const immediateChildStats = new Map<string, InventorySummary>();
 
   while (stack.length > 0) {
     const currentEntry = stack.pop();
+    if (!currentEntry) {
+      continue;
+    }
     const current = typeof currentEntry === 'string' ? currentEntry : currentEntry.path;
     const branchRoot = typeof currentEntry === 'string' ? null : currentEntry.branchRoot;
     counts.directoriesVisited += 1;
@@ -191,7 +374,7 @@ function inventoryTask(task, options) {
 
         const nextBranchRoot = current === task.rootPath ? fullPath : branchRoot;
         if (current === task.rootPath) {
-          getImmediateChildStats(immediateChildStats, nextBranchRoot);
+          getImmediateChildStats(immediateChildStats, fullPath);
         }
         stack.push({
           path: fullPath,
@@ -256,7 +439,7 @@ function inventoryTask(task, options) {
   return counts;
 }
 
-function computeWorkUnits(inventory) {
+function computeWorkUnits(inventory: InventorySummary): number {
   return Math.max(
     1,
     inventory.directoriesVisited +
@@ -266,48 +449,38 @@ function computeWorkUnits(inventory) {
   );
 }
 
-function recordTraversalError(target, error) {
-  const code = typeof error?.code === 'string' ? error.code : 'OTHER';
-  if (code in target.traversalErrors) {
-    target.traversalErrors[code] += 1;
-    return;
-  }
-  target.traversalErrors.OTHER += 1;
+function recordTraversalError(target: { traversalErrors: TraversalErrorCounts }, error: unknown): void {
+  const code = getTraversalErrorCode(error);
+  target.traversalErrors[code] += 1;
 }
 
-function isWorkflowFile(filePath, baseName = path.basename(filePath)) {
+function isWorkflowFile(filePath: string, baseName = path.basename(filePath)): boolean {
   return filePath.split(path.sep).join('/').includes('/.github/workflows/') && /\.(yml|yaml)$/i.test(baseName);
 }
 
-export function formatTaskPlanSummary(taskPlan) {
+export function formatTaskPlanSummary(taskPlan: PreflightTaskPlanSummary | PreflightTaskPlan | null | undefined): string {
   if (!taskPlan?.inventory) {
     return normalizeForDisplay(taskPlan?.rootPath ?? '');
   }
   return `${normalizeForDisplay(taskPlan.rootPath)} work=${taskPlan.workUnits} dirs=${taskPlan.inventory.directoriesVisited} files=${taskPlan.inventory.filesVisited} candidate_files=${taskPlan.inventory.candidateFilesDiscovered} node_modules_roots=${taskPlan.inventory.nodeModulesRootsDiscovered}`;
 }
 
-function getImmediateChildStats(map, childPath) {
+function getImmediateChildStats(map: Map<string, InventorySummary>, childPath: string): InventorySummary {
   const existing = map.get(childPath);
   if (existing) {
     return existing;
   }
-  const next = {
+  const next: InventorySummary = {
     directoriesVisited: 0,
     filesVisited: 0,
     candidateFilesDiscovered: 0,
     nodeModulesRootsDiscovered: 0,
-    traversalErrors: {
-      EACCES: 0,
-      EPERM: 0,
-      ENOENT: 0,
-      OTHER: 0,
-    },
   };
   map.set(childPath, next);
   return next;
 }
 
-function withExecutionPlan(basePlan) {
+function withExecutionPlan(basePlan: BasePreflightPlan): PreflightPlan {
   const executionPlan = buildExecutionPlan(basePlan);
   return {
     ...basePlan,
@@ -317,9 +490,13 @@ function withExecutionPlan(basePlan) {
   };
 }
 
-function buildExecutionPlan(preflightPlan) {
-  const executionTasks = [];
-  const executionTaskPlans = [];
+function buildExecutionPlan(preflightPlan: BasePreflightPlan): {
+  executionTasks: PreflightTaskDescriptor[];
+  executionTaskPlans: PreflightTaskPlanSummary[];
+  splitSummary: PreflightSplitSummary;
+} {
+  const executionTasks: PreflightTaskDescriptor[] = [];
+  const executionTaskPlans: PreflightTaskPlanSummary[] = [];
   let nextSyntheticId = 1;
   let splitTaskCount = 0;
 
@@ -340,14 +517,18 @@ function buildExecutionPlan(preflightPlan) {
       });
       continue;
     }
+    const taskInventory = taskPlan.inventory;
+    if (!taskInventory) {
+      continue;
+    }
 
     splitTaskCount += 1;
     const rootTaskId = `${taskPlan.taskId}:root`;
-    const rootInventory = {
+    const rootInventory: InventorySummary = {
       directoriesVisited: 1,
-      filesVisited: taskPlan.inventory.rootFilesVisited,
-      candidateFilesDiscovered: taskPlan.inventory.rootCandidateFilesDiscovered,
-      nodeModulesRootsDiscovered: taskPlan.inventory.rootNodeModulesRootsDiscovered,
+      filesVisited: taskInventory.rootFilesVisited,
+      candidateFilesDiscovered: taskInventory.rootCandidateFilesDiscovered,
+      nodeModulesRootsDiscovered: taskInventory.rootNodeModulesRootsDiscovered,
     };
     const rootWorkUnits = computeWorkUnits(rootInventory);
     executionTasks.push({
@@ -364,7 +545,7 @@ function buildExecutionPlan(preflightPlan) {
       inventory: rootInventory,
     });
 
-    for (const childPlan of taskPlan.inventory.immediateChildren) {
+    for (const childPlan of taskInventory.immediateChildren) {
       const childTaskId = `${taskPlan.taskId}:split:${nextSyntheticId}`;
       nextSyntheticId += 1;
       executionTasks.push({
@@ -394,7 +575,7 @@ function buildExecutionPlan(preflightPlan) {
   };
 }
 
-function shouldSplitTaskPlan(taskPlan, preflightPlan) {
+function shouldSplitTaskPlan(taskPlan: PreflightTaskPlan, preflightPlan: BasePreflightPlan): boolean {
   if (preflightPlan.mode !== PREFLIGHT_MODE_DEEP) {
     return false;
   }

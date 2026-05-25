@@ -4,13 +4,19 @@ import path from 'node:path';
 import process from 'node:process';
 import { Worker } from 'node:worker_threads';
 
-import { addFinding, createFindingsContainer, mergeFindings } from '../domain/findings';
 import {
-  EXTRA_SCAN_FILE_BASENAMES,
+  addFinding,
+  createFindingsContainer,
+  mergeFindings,
+  type FindingRecord,
+  type FindingsContainer,
+} from '../domain/findings';
+import {
   LOCKFILE_NAMES,
   PACKAGE_JSON_NAME,
   SCAN_CANDIDATE_BASENAMES,
   SCAN_MODE_MACHINE,
+  SCAN_MODE_PROJECT,
   broadContentIndicators,
   dataset,
   exactRulesByName,
@@ -18,6 +24,7 @@ import {
   shouldSkipDirectory,
   suspiciousPackageFileRulesByBasename,
   suspiciousPresenceBasenameRules,
+  type SupplyChainDataset,
   workflowSupportIndicators,
 } from '../domain/policy';
 import {
@@ -34,41 +41,194 @@ import {
 } from '../infrastructure/fs-utils';
 import { runRipgrepLiteralScan } from '../infrastructure/ripgrep';
 import { runCommand } from '../infrastructure/process-utils';
+import type {
+  PreflightPlan,
+  PreflightTaskPlanSummary,
+} from './preflight';
 
 const broadIndicatorSet = new Set(broadContentIndicators);
 
-export function createScanStats() {
+type ScanMode = typeof SCAN_MODE_MACHINE | typeof SCAN_MODE_PROJECT;
+type TraversalErrorCode = 'EACCES' | 'EPERM' | 'ENOENT' | 'OTHER';
+type TaskProgressPhase =
+  | 'task-started'
+  | 'discovery-complete'
+  | 'project-semantic-complete'
+  | 'project-rg-started'
+  | 'project-rg-complete'
+  | 'node-modules-semantic-started'
+  | 'node-modules-complete'
+  | 'task-complete';
+type ManifestDependencySection =
+  | 'dependencies'
+  | 'devDependencies'
+  | 'optionalDependencies'
+  | 'peerDependencies';
+type JsonObject = Record<string, unknown>;
+type FileRule =
+  | SupplyChainDataset['suspiciousHomePathPresenceRules'][number]
+  | SupplyChainDataset['suspiciousAbsolutePathRules'][number]
+  | SupplyChainDataset['suspiciousWindowsPathRules'][number];
+type ProjectContentRule = SupplyChainDataset['suspiciousProjectFileContentRules'][number];
+type PackageFileRule = SupplyChainDataset['suspiciousPackageFileRules'][number];
+
+export interface ScanStats {
+  directoriesVisited: number;
+  candidateFilesVisited: number;
+  nodeModulesDirsVisited: number;
+  traversalErrors: Record<TraversalErrorCode, number>;
+}
+
+export interface ScanTask {
+  id: string | number;
+  rootPath: string;
+  mode: ScanMode;
+  shallow: boolean;
+  includeTrash: boolean;
+}
+
+export interface BuildScanTaskOptions {
+  includeTrash?: boolean;
+}
+
+export interface WorkerPoolOptions {
+  workers: number;
+  verbose: boolean;
+  heartbeatMs?: number;
+}
+
+export interface TaskProgressEvent {
+  phase: TaskProgressPhase;
+  taskId: string | number;
+  rootPath: string;
+  timestamp: number;
+  startedAt?: number;
+  elapsedMs?: number;
+  directoriesVisited?: number;
+  candidateFilesVisited?: number;
+  nodeModulesDirsVisited?: number;
+  candidateFilesDiscovered?: number;
+  nodeModulesRootsDiscovered?: number;
+  installedPackagesScanned?: number;
+  matchedFiles?: number;
+  candidateFilesProcessed?: number;
+  candidateFilesConsidered?: number;
+  nodeModulesDirectoriesVisited?: number;
+}
+
+export interface ScanTaskResult {
+  task: ScanTask;
+  findings: FindingsContainer;
+  stats: ScanStats;
+}
+
+interface ProgressTaskState {
+  rootPath: string;
+  startedAt: number;
+  phase: TaskProgressPhase;
+  progressFraction: number;
+  workUnits: number;
+}
+
+interface ProgressState {
+  totalTasks: number;
+  workerCount: number;
+  startedTasks: number;
+  completedTasks: number;
+  completedWorkUnits: number;
+  activeTasks: Map<ScanTask['id'], ProgressTaskState>;
+  startedAt: number;
+  totalWorkUnits: number;
+  progressModel: string;
+  taskPlanById: Map<string, PreflightTaskPlanSummary>;
+}
+
+interface WorkerProgressMessage {
+  type: 'progress';
+  event: TaskProgressEvent;
+}
+
+interface WorkerResultMessage {
+  type: 'result';
+  result: ScanTaskResult;
+}
+
+function createTraversalErrors(): Record<TraversalErrorCode, number> {
+  return {
+    EACCES: 0,
+    EPERM: 0,
+    ENOENT: 0,
+    OTHER: 0,
+  };
+}
+
+function isObjectRecord(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function getTraversalErrorCode(error: unknown): TraversalErrorCode {
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    const code = error['code'];
+    if (code === 'EACCES' || code === 'EPERM' || code === 'ENOENT') {
+      return code;
+    }
+  }
+  return 'OTHER';
+}
+
+function isWorkerProgressMessage(message: unknown): message is WorkerProgressMessage {
+  if (!isObjectRecord(message) || message['type'] !== 'progress') {
+    return false;
+  }
+  const event = message['event'];
+  return isObjectRecord(event) && typeof event['phase'] === 'string';
+}
+
+function isWorkerResultMessage(message: unknown): message is WorkerResultMessage {
+  if (!isObjectRecord(message) || message['type'] !== 'result') {
+    return false;
+  }
+  const result = message['result'];
+  return isObjectRecord(result)
+    && isObjectRecord(result['findings'])
+    && isObjectRecord(result['stats'])
+    && isObjectRecord(result['task']);
+}
+
+export function createScanStats(): ScanStats {
   return {
     directoriesVisited: 0,
     candidateFilesVisited: 0,
     nodeModulesDirsVisited: 0,
-    traversalErrors: {
-      EACCES: 0,
-      EPERM: 0,
-      ENOENT: 0,
-      OTHER: 0,
-    },
+    traversalErrors: createTraversalErrors(),
   };
 }
 
-export function mergeStats(target, source) {
+export function mergeStats(target: ScanStats, source: ScanStats | null | undefined): void {
   if (!source) {
     return;
   }
   target.directoriesVisited += source.directoriesVisited ?? 0;
   target.candidateFilesVisited += source.candidateFilesVisited ?? 0;
   target.nodeModulesDirsVisited += source.nodeModulesDirsVisited ?? 0;
-  for (const key of Object.keys(target.traversalErrors)) {
+  for (const key of ['EACCES', 'EPERM', 'ENOENT', 'OTHER'] as const) {
     target.traversalErrors[key] += source.traversalErrors?.[key] ?? 0;
   }
 }
 
-export function enumerateMachineRoots() {
+export function enumerateMachineRoots(): string[] {
   if (process.platform !== 'win32') {
     return ['/'];
   }
 
-  const roots = [];
+  const roots: string[] = [];
   for (let codePoint = 67; codePoint <= 90; codePoint += 1) {
     const drive = String.fromCharCode(codePoint);
     const driveRoot = `${drive}:\\`;
@@ -80,8 +240,13 @@ export function enumerateMachineRoots() {
   return roots;
 }
 
-export function buildScanTasks(roots, mode, findings, options = {}) {
-  const tasks = [];
+export function buildScanTasks(
+  roots: readonly string[],
+  mode: ScanMode,
+  findings: FindingsContainer,
+  options: BuildScanTaskOptions = {},
+): ScanTask[] {
+  const tasks: ScanTask[] = [];
   let nextTaskId = 1;
 
   for (const rootPath of roots) {
@@ -122,7 +287,7 @@ export function buildScanTasks(roots, mode, findings, options = {}) {
       addFinding(findings.errors, {
         type: 'root-read-error',
         path: normalizeForDisplay(rootPath),
-        message: `Could not enumerate ${normalizeForDisplay(rootPath)}: ${error.message}`,
+        message: `Could not enumerate ${normalizeForDisplay(rootPath)}: ${toErrorMessage(error)}`,
       });
       continue;
     }
@@ -144,7 +309,7 @@ export function buildScanTasks(roots, mode, findings, options = {}) {
       if (entry.name === 'node_modules') {
         continue;
       }
-      if (shouldSkipDirectory(entry.name, mode, { includeTrash: options.includeTrash })) {
+      if (shouldSkipDirectory(entry.name, mode, { includeTrash: Boolean(options.includeTrash) })) {
         continue;
       }
       tasks.push({
@@ -161,7 +326,7 @@ export function buildScanTasks(roots, mode, findings, options = {}) {
   return tasks;
 }
 
-export function inspectFixedHomePaths(findings) {
+export function inspectFixedHomePaths(findings: FindingsContainer): void {
   for (const rule of dataset.suspiciousHomePathPresenceRules) {
     if (!platformMatches(rule.platforms)) {
       continue;
@@ -187,7 +352,7 @@ export function inspectFixedHomePaths(findings) {
   }
 }
 
-export function inspectHomeContentRules(findings) {
+export function inspectHomeContentRules(findings: FindingsContainer): void {
   const homeRules = dataset.suspiciousProjectFileContentRules.filter((rule) =>
     ['.bashrc', '.zshrc', '.claude/settings.json'].some((suffix) =>
       normalizeSlashes(rule.relativePath).endsWith(suffix),
@@ -213,7 +378,7 @@ export function inspectHomeContentRules(findings) {
   }
 }
 
-export function inspectWindowsRegistry(findings) {
+export function inspectWindowsRegistry(findings: FindingsContainer): void {
   if (process.platform !== 'win32') {
     return;
   }
@@ -236,7 +401,10 @@ export function inspectWindowsRegistry(findings) {
   }
 }
 
-export function runScanTask(task, reportProgress = () => {}) {
+export function runScanTask(
+  task: ScanTask,
+  reportProgress: (event: TaskProgressEvent) => void = () => undefined,
+): ScanTaskResult {
   const findings = createFindingsContainer();
   const stats = createScanStats();
   const taskStartedAt = Date.now();
@@ -356,7 +524,12 @@ export function runScanTask(task, reportProgress = () => {}) {
   };
 }
 
-export async function runWorkerPool(tasks, findings, options, preflightPlan = null) {
+export async function runWorkerPool(
+  tasks: readonly ScanTask[],
+  findings: FindingsContainer,
+  options: WorkerPoolOptions,
+  preflightPlan: PreflightPlan | null = null,
+): Promise<{ scanStats: ScanStats; workersUsed: number }> {
   const mergedStats = createScanStats();
 
   if (tasks.length === 0) {
@@ -384,6 +557,9 @@ export async function runWorkerPool(tasks, findings, options, preflightPlan = nu
     while (nextIndex < tasks.length) {
       const task = tasks[nextIndex];
       nextIndex += 1;
+      if (!task) {
+        continue;
+      }
 
       let result;
       try {
@@ -398,7 +574,7 @@ export async function runWorkerPool(tasks, findings, options, preflightPlan = nu
         addFinding(findings.errors, {
           type: 'worker-error',
           path: normalizeForDisplay(task.rootPath),
-          message: `Worker failed for ${normalizeForDisplay(task.rootPath)}: ${error.message}`,
+          message: `Worker failed for ${normalizeForDisplay(task.rootPath)}: ${toErrorMessage(error)}`,
         });
         continue;
       }
@@ -419,27 +595,31 @@ export async function runWorkerPool(tasks, findings, options, preflightPlan = nu
   };
 }
 
-function recordTraversalError(stats, error) {
-  const code = typeof error?.code === 'string' ? error.code : 'OTHER';
-  if (code in stats.traversalErrors) {
-    stats.traversalErrors[code] += 1;
-    return;
-  }
-  stats.traversalErrors.OTHER += 1;
+function recordTraversalError(stats: ScanStats, error: unknown): void {
+  const code = getTraversalErrorCode(error);
+  stats.traversalErrors[code] += 1;
 }
 
-function rootLikelyContainsProjects(rootPath) {
-  return fileExists(rootPath) && statSafe(rootPath)?.isDirectory();
+function rootLikelyContainsProjects(rootPath: string): boolean {
+  return Boolean(fileExists(rootPath) && statSafe(rootPath)?.isDirectory());
 }
 
-function discoverScanTargets(rootPath, options, stats, findings) {
-  const stack = [rootPath];
-  const candidateFiles = [];
-  const nodeModulesDirs = [];
+function discoverScanTargets(
+  rootPath: string,
+  options: Pick<ScanTask, 'mode' | 'shallow' | 'includeTrash'>,
+  stats: ScanStats,
+  findings: FindingsContainer,
+): { candidateFiles: string[]; nodeModulesDirs: string[] } {
+  const stack: string[] = [rootPath];
+  const candidateFiles: string[] = [];
+  const nodeModulesDirs: string[] = [];
   const shallowRoot = Boolean(options.shallow);
 
   while (stack.length > 0) {
     const current = stack.pop();
+    if (typeof current !== 'string') {
+      continue;
+    }
     stats.directoriesVisited += 1;
 
     let entries = [];
@@ -498,16 +678,16 @@ function discoverScanTargets(rootPath, options, stats, findings) {
   return { candidateFiles, nodeModulesDirs };
 }
 
-function isCandidateScanFile(fullPath, baseName) {
+function isCandidateScanFile(fullPath: string, baseName: string): boolean {
   return SCAN_CANDIDATE_BASENAMES.has(baseName) || isWorkflowFile(fullPath, baseName);
 }
 
-function isWorkflowFile(filePath, baseName = path.basename(filePath)) {
+function isWorkflowFile(filePath: string, baseName = path.basename(filePath)): boolean {
   const normalized = normalizeSlashes(filePath);
   return normalized.includes('/.github/workflows/') && /\.(yml|yaml)$/i.test(baseName);
 }
 
-function scanCandidateFileSemantic(filePath, findings) {
+function scanCandidateFileSemantic(filePath: string, findings: FindingsContainer): void {
   const baseName = path.basename(filePath);
 
   if (baseName === PACKAGE_JSON_NAME) {
@@ -520,7 +700,7 @@ function scanCandidateFileSemantic(filePath, findings) {
   }
 }
 
-function scanPackageJsonFile(filePath, findings) {
+function scanPackageJsonFile(filePath: string, findings: FindingsContainer): void {
   const { rawText, value } = readJsonSafe(filePath);
   if (!rawText) {
     return;
@@ -528,11 +708,11 @@ function scanPackageJsonFile(filePath, findings) {
 
   checkManifestNeedles(rawText, filePath, findings.heuristicHits);
 
-  if (!value) {
+  if (!isObjectRecord(value)) {
     return;
   }
 
-  const dependencySections = [
+  const dependencySections: readonly ManifestDependencySection[] = [
     'dependencies',
     'devDependencies',
     'optionalDependencies',
@@ -540,7 +720,7 @@ function scanPackageJsonFile(filePath, findings) {
   ];
   for (const section of dependencySections) {
     const dependencies = value[section];
-    if (!dependencies || typeof dependencies !== 'object') {
+    if (!isObjectRecord(dependencies)) {
       continue;
     }
     for (const [packageName, rawSpec] of Object.entries(dependencies)) {
@@ -567,7 +747,8 @@ function scanPackageJsonFile(filePath, findings) {
     }
   }
 
-  const scripts = value.scripts && typeof value.scripts === 'object' ? value.scripts : {};
+  const manifestScripts = value['scripts'];
+  const scripts = isObjectRecord(manifestScripts) ? manifestScripts : {};
   const scriptText = JSON.stringify(scripts);
   for (const rule of dataset.suspiciousPackageScriptRules) {
     if (!matchAllNeedles(scriptText, rule.match)) {
@@ -583,7 +764,7 @@ function scanPackageJsonFile(filePath, findings) {
   }
 }
 
-function scanLockfile(filePath, findings) {
+function scanLockfile(filePath: string, findings: FindingsContainer): void {
   let text = '';
   try {
     text = readFileTextSafe(filePath);
@@ -594,7 +775,7 @@ function scanLockfile(filePath, findings) {
     addFinding(findings.errors, {
       type: 'read-error',
       path: normalizeForDisplay(filePath),
-      message: `Could not read ${normalizeForDisplay(filePath)}: ${error.message}`,
+      message: `Could not read ${normalizeForDisplay(filePath)}: ${toErrorMessage(error)}`,
     });
     return;
   }
@@ -616,7 +797,7 @@ function scanLockfile(filePath, findings) {
   }
 }
 
-function checkManifestNeedles(rawText, sourcePath, findings) {
+function checkManifestNeedles(rawText: string, sourcePath: string, findings: FindingRecord[]): void {
   for (const rule of dataset.suspiciousPackageManifestNeedles) {
     if (!rawText.includes(rule.needle)) {
       continue;
@@ -632,7 +813,12 @@ function checkManifestNeedles(rawText, sourcePath, findings) {
   }
 }
 
-function findExactVersionHitsInText(text, sourcePath, targetArray, category) {
+function findExactVersionHitsInText(
+  text: string,
+  sourcePath: string,
+  targetArray: FindingRecord[],
+  category: string,
+): void {
   for (const rule of dataset.exactPackageVersionRules) {
     for (const version of rule.compromisedVersions) {
       if (!looksLikeMatchingLockEntry(text, rule.name, version)) {
@@ -651,7 +837,7 @@ function findExactVersionHitsInText(text, sourcePath, targetArray, category) {
   }
 }
 
-function looksLikeMatchingLockEntry(text, packageName, version) {
+function looksLikeMatchingLockEntry(text: string, packageName: string, version: string): boolean {
   const escapedName = escapeRegExp(packageName);
   const escapedVersion = escapeRegExp(version);
   const patterns = [
@@ -663,7 +849,7 @@ function looksLikeMatchingLockEntry(text, packageName, version) {
   return patterns.some((pattern) => pattern.test(text));
 }
 
-function inspectLoosePresenceByBasename(filePath, findings) {
+function inspectLoosePresenceByBasename(filePath: string, findings: FindingsContainer): void {
   const baseName = path.basename(filePath);
   const reasons = suspiciousPresenceBasenameRules.get(baseName) ?? [];
   for (const reason of reasons) {
@@ -677,7 +863,11 @@ function inspectLoosePresenceByBasename(filePath, findings) {
   }
 }
 
-function applyProjectRipgrepResults(task, candidateFiles, findings) {
+function applyProjectRipgrepResults(
+  task: ScanTask,
+  candidateFiles: readonly string[],
+  findings: FindingsContainer,
+): { matchedFiles: number } {
   if (candidateFiles.length === 0) {
     return {
       matchedFiles: 0,
@@ -689,7 +879,7 @@ function applyProjectRipgrepResults(task, candidateFiles, findings) {
     '**/.github/workflows/*.yml',
     '**/.github/workflows/*.yaml',
   ];
-  const excludeGlobs = [
+  const excludeGlobs: string[] = [
     '!**/node_modules/**',
     '!**/.git/**',
     '!**/.hg/**',
@@ -720,7 +910,7 @@ function applyProjectRipgrepResults(task, candidateFiles, findings) {
     addFinding(findings.errors, {
       type: 'ripgrep-error',
       path: normalizeForDisplay(task.rootPath),
-      message: `ripgrep failed for ${normalizeForDisplay(task.rootPath)}: ${error.message}`,
+      message: `ripgrep failed for ${normalizeForDisplay(task.rootPath)}: ${toErrorMessage(error)}`,
     });
     return {
       matchedFiles: 0,
@@ -739,7 +929,7 @@ function applyProjectRipgrepResults(task, candidateFiles, findings) {
   };
 }
 
-function applyBroadIndicatorHits(filePath, matchedNeedles, findings) {
+function applyBroadIndicatorHits(filePath: string, matchedNeedles: ReadonlySet<string>, findings: FindingsContainer): void {
   for (const indicator of matchedNeedles) {
     if (!broadIndicatorSet.has(indicator)) {
       continue;
@@ -754,7 +944,7 @@ function applyBroadIndicatorHits(filePath, matchedNeedles, findings) {
   }
 }
 
-function applyProjectRuleHits(filePath, matchedNeedles, findings) {
+function applyProjectRuleHits(filePath: string, matchedNeedles: ReadonlySet<string>, findings: FindingsContainer): void {
   for (const rule of dataset.suspiciousProjectFileContentRules) {
     if (!isProjectRuleCandidate(filePath, rule)) {
       continue;
@@ -774,7 +964,7 @@ function applyProjectRuleHits(filePath, matchedNeedles, findings) {
   }
 }
 
-function applyWorkflowHeuristicHits(filePath, matchedNeedles, findings) {
+function applyWorkflowHeuristicHits(filePath: string, matchedNeedles: ReadonlySet<string>, findings: FindingsContainer): void {
   if (!isWorkflowFile(filePath)) {
     return;
   }
@@ -796,9 +986,14 @@ function applyWorkflowHeuristicHits(filePath, matchedNeedles, findings) {
   });
 }
 
-function applyLoosePayloadHits(filePath, matchedNeedles, findings, type) {
+function applyLoosePayloadHits(
+  filePath: string,
+  matchedNeedles: ReadonlySet<string>,
+  findings: FindingsContainer,
+  type: string,
+): void {
   const baseName = path.basename(filePath);
-  const matchingRules = suspiciousPackageFileRulesByBasename.get(baseName) ?? [];
+  const matchingRules: PackageFileRule[] = suspiciousPackageFileRulesByBasename.get(baseName) ?? [];
   if (matchingRules.length === 0) {
     return;
   }
@@ -825,14 +1020,18 @@ function applyLoosePayloadHits(filePath, matchedNeedles, findings, type) {
   }
 }
 
-function applyNodeModulesRipgrepResults(nodeModulesDir, packageDirToName, findings) {
+function applyNodeModulesRipgrepResults(
+  nodeModulesDir: string,
+  packageDirToName: ReadonlyMap<string, string>,
+  findings: FindingsContainer,
+): { matchedFiles: number } {
   if (packageDirToName.size === 0) {
     return {
       matchedFiles: 0,
     };
   }
 
-  const includeGlobs = [...suspiciousPackageFileRulesByBasename.keys()].map((basename) => `**/${basename}`);
+  const includeGlobs: string[] = [...suspiciousPackageFileRulesByBasename.keys()].map((basename) => `**/${basename}`);
   let matchesByFile;
   try {
     matchesByFile = runRipgrepLiteralScan({
@@ -851,7 +1050,7 @@ function applyNodeModulesRipgrepResults(nodeModulesDir, packageDirToName, findin
     addFinding(findings.errors, {
       type: 'ripgrep-error',
       path: normalizeForDisplay(nodeModulesDir),
-      message: `ripgrep failed for ${normalizeForDisplay(nodeModulesDir)}: ${error.message}`,
+      message: `ripgrep failed for ${normalizeForDisplay(nodeModulesDir)}: ${toErrorMessage(error)}`,
     });
     return {
       matchedFiles: 0,
@@ -864,7 +1063,7 @@ function applyNodeModulesRipgrepResults(nodeModulesDir, packageDirToName, findin
       continue;
     }
     const baseName = path.basename(filePath);
-    const rules = suspiciousPackageFileRulesByBasename.get(baseName) ?? [];
+    const rules: PackageFileRule[] = suspiciousPackageFileRulesByBasename.get(baseName) ?? [];
     const stats = statSafe(filePath);
     if (!stats?.isFile()) {
       continue;
@@ -896,17 +1095,24 @@ function applyNodeModulesRipgrepResults(nodeModulesDir, packageDirToName, findin
   };
 }
 
-function scanInstalledPackagesSemantic(nodeModulesDir, findings, stats) {
-  const packageDirToName = new Map();
+function scanInstalledPackagesSemantic(
+  nodeModulesDir: string,
+  findings: FindingsContainer,
+  stats: ScanStats,
+): Map<string, string> {
+  const packageDirToName = new Map<string, string>();
   if (!fileExists(nodeModulesDir)) {
     return packageDirToName;
   }
 
-  const visited = new Set();
-  const stack = [nodeModulesDir];
+  const visited = new Set<string>();
+  const stack: string[] = [nodeModulesDir];
 
   while (stack.length > 0) {
     const current = stack.pop();
+    if (typeof current !== 'string') {
+      continue;
+    }
     let realCurrent = current;
     try {
       realCurrent = fs.realpathSync.native(current);
@@ -965,19 +1171,19 @@ function scanInstalledPackagesSemantic(nodeModulesDir, findings, stats) {
   return packageDirToName;
 }
 
-function scanInstalledPackageDirSemantic(packageDir, findings) {
+function scanInstalledPackageDirSemantic(packageDir: string, findings: FindingsContainer): string | null {
   const packageJsonPath = path.join(packageDir, PACKAGE_JSON_NAME);
   if (!fileExists(packageJsonPath)) {
     return null;
   }
 
   const { rawText, value } = readJsonSafe(packageJsonPath);
-  if (!rawText || !value || typeof value.name !== 'string') {
+  if (!rawText || !isObjectRecord(value) || typeof value['name'] !== 'string') {
     return null;
   }
 
-  const packageName = value.name;
-  const packageVersion = typeof value.version === 'string' ? value.version : null;
+  const packageName = value['name'];
+  const packageVersion = typeof value['version'] === 'string' ? value['version'] : null;
 
   const exactRules = exactRulesByName.get(packageName) ?? [];
   for (const rule of exactRules) {
@@ -1015,7 +1221,7 @@ function scanInstalledPackageDirSemantic(packageDir, findings) {
   return packageName;
 }
 
-function resolveOwningPackageName(filePath, packageDirToName) {
+function resolveOwningPackageName(filePath: string, packageDirToName: ReadonlyMap<string, string>): string | null {
   let current = path.resolve(path.dirname(filePath));
   while (true) {
     const packageName = packageDirToName.get(current);
@@ -1030,12 +1236,12 @@ function resolveOwningPackageName(filePath, packageDirToName) {
   }
 }
 
-function inspectFileRuleAtPath(absolutePath, rule, findings) {
+function inspectFileRuleAtPath(absolutePath: string, rule: FileRule, findings: FindingsContainer): void {
   if (!fileExists(absolutePath)) {
     return;
   }
 
-  if (rule.contentInspectionOnly) {
+  if ('contentInspectionOnly' in rule && rule['contentInspectionOnly'] === true) {
     addFinding(findings.artifactHits, {
       type: 'artifact-presence-hit',
       rule: rule.reason,
@@ -1055,7 +1261,7 @@ function inspectFileRuleAtPath(absolutePath, rule, findings) {
   });
 }
 
-function inspectContentRule(filePath, rule, findings) {
+function inspectContentRule(filePath: string, rule: ProjectContentRule, findings: FindingsContainer): void {
   let text = '';
   try {
     text = readFileTextSafe(filePath);
@@ -1066,7 +1272,7 @@ function inspectContentRule(filePath, rule, findings) {
     addFinding(findings.errors, {
       type: 'read-error',
       path: normalizeForDisplay(filePath),
-      message: `Could not read ${normalizeForDisplay(filePath)}: ${error.message}`,
+      message: `Could not read ${normalizeForDisplay(filePath)}: ${toErrorMessage(error)}`,
     });
     return;
   }
@@ -1086,30 +1292,30 @@ function inspectContentRule(filePath, rule, findings) {
   });
 }
 
-function isProjectRuleCandidate(filePath, rule) {
+function isProjectRuleCandidate(filePath: string, rule: ProjectContentRule): boolean {
   const normalized = normalizeSlashes(path.relative(process.cwd(), filePath));
   const endsWith = normalizeSlashes(rule.relativePath);
   return normalized.endsWith(endsWith) || normalizeSlashes(filePath).endsWith(endsWith);
 }
 
-function matchNeedles(haystack, needles) {
+function matchNeedles(haystack: string, needles: readonly string[]): boolean {
   return needles.some((needle) => haystack.includes(needle));
 }
 
-function matchAllNeedles(haystack, needles) {
+function matchAllNeedles(haystack: string, needles: readonly string[]): boolean {
   return needles.every((needle) => haystack.includes(needle));
 }
 
-function isPermissionDeniedError(error) {
-  const code = typeof error?.code === 'string' ? error.code : '';
+function isPermissionDeniedError(error: unknown): boolean {
+  const code = getTraversalErrorCode(error);
   return code === 'EACCES' || code === 'EPERM';
 }
 
-function isDirectoryEntryLink(entry, fullPath) {
+function isDirectoryEntryLink(entry: fs.Dirent, fullPath: string): boolean {
   return entry.isSymbolicLink() && Boolean(statSafe(fullPath)?.isDirectory());
 }
 
-function isDirectoryLinkPath(fullPath) {
+function isDirectoryLinkPath(fullPath: string): boolean {
   try {
     return fs.lstatSync(fullPath).isSymbolicLink() && Boolean(statSafe(fullPath)?.isDirectory());
   } catch {
@@ -1117,11 +1323,11 @@ function isDirectoryLinkPath(fullPath) {
   }
 }
 
-function isRecycleBinPath(fullPath) {
+function isRecycleBinPath(fullPath: string): boolean {
   return normalizeSlashes(path.resolve(fullPath)).split('/').includes('$Recycle.Bin');
 }
 
-function recordTraversalLimitation(findings, fullPath, error) {
+function recordTraversalLimitation(findings: FindingsContainer, fullPath: string, error: unknown): boolean {
   if (!findings || !isPermissionDeniedError(error)) {
     return false;
   }
@@ -1129,13 +1335,13 @@ function recordTraversalLimitation(findings, fullPath, error) {
   addFinding(findings.limitations, {
     type: 'unreadable-directory',
     path: normalizeForDisplay(fullPath),
-    rule: typeof error?.code === 'string' ? error.code : 'permission-denied',
+    rule: getTraversalErrorCode(error),
     message: `Skipped unreadable directory ${normalizeForDisplay(fullPath)}: access was denied by the operating system (system-managed or permission-restricted area).`,
   });
   return true;
 }
 
-function recordReadLimitation(findings, filePath, error) {
+function recordReadLimitation(findings: FindingsContainer, filePath: string, error: unknown): boolean {
   if (!findings || !isPermissionDeniedError(error)) {
     return false;
   }
@@ -1143,14 +1349,19 @@ function recordReadLimitation(findings, filePath, error) {
   addFinding(findings.limitations, {
     type: 'unreadable-file',
     path: normalizeForDisplay(filePath),
-    rule: typeof error?.code === 'string' ? error.code : 'permission-denied',
+    rule: getTraversalErrorCode(error),
     message: `Skipped unreadable file ${normalizeForDisplay(filePath)}: access was denied by the operating system (system-managed or permission-restricted area).`,
   });
   return true;
 }
 
-function recordRipgrepLimitation(findings, fullPath, error, nodeModulesScope) {
-  const message = String(error?.message ?? '');
+function recordRipgrepLimitation(
+  findings: FindingsContainer,
+  fullPath: string,
+  error: unknown,
+  nodeModulesScope: boolean,
+): boolean {
+  const message = toErrorMessage(error);
   const normalizedMessage = message.toLowerCase();
   const accessDenied =
     normalizedMessage.includes('zugriff verweigert') ||
@@ -1176,8 +1387,11 @@ function recordRipgrepLimitation(findings, fullPath, error, nodeModulesScope) {
   return true;
 }
 
-function createWorker(task, onProgress) {
-  return new Promise((resolve, reject) => {
+function createWorker(
+  task: ScanTask,
+  onProgress?: (event: TaskProgressEvent) => void,
+): Promise<ScanTaskResult> {
+  return new Promise<ScanTaskResult>((resolve, reject) => {
     let settled = false;
     const execArgv = process.execArgv.includes('tsx')
       ? process.execArgv
@@ -1189,21 +1403,17 @@ function createWorker(task, onProgress) {
       },
     });
 
-    worker.on('message', (message) => {
-      if (message?.type === 'progress') {
+    worker.on('message', (message: unknown) => {
+      if (isWorkerProgressMessage(message)) {
         onProgress?.(message.event);
         return;
       }
-      if (message?.type === 'result') {
+      if (isWorkerResultMessage(message)) {
         if (!settled) {
           settled = true;
           resolve(message.result);
         }
         return;
-      }
-      if (!settled) {
-        settled = true;
-        resolve(message);
       }
     });
     worker.once('error', reject);
@@ -1215,7 +1425,12 @@ function createWorker(task, onProgress) {
   });
 }
 
-function reportTaskProgress(reportProgress, task, phase, details = {}) {
+function reportTaskProgress(
+  reportProgress: (event: TaskProgressEvent) => void,
+  task: ScanTask,
+  phase: TaskProgressPhase,
+  details: Omit<Partial<TaskProgressEvent>, 'phase' | 'taskId' | 'rootPath' | 'timestamp'> = {},
+): void {
   reportProgress({
     phase,
     taskId: task.id,
@@ -1225,8 +1440,15 @@ function reportTaskProgress(reportProgress, task, phase, details = {}) {
   });
 }
 
-function createProgressState(tasks, workerCount, preflightPlan) {
-  const taskPlanById = new Map(((preflightPlan?.executionTaskPlans ?? preflightPlan?.taskPlans) ?? []).map((taskPlan) => [taskPlan.taskId, taskPlan]));
+function createProgressState(
+  tasks: readonly ScanTask[],
+  workerCount: number,
+  preflightPlan: PreflightPlan | null,
+): ProgressState {
+  const taskPlanById = new Map<string, PreflightTaskPlanSummary>(
+    (preflightPlan?.executionTaskPlans ?? [])
+      .map((taskPlan) => [taskPlan.taskId, taskPlan]),
+  );
   return {
     totalTasks: tasks.length,
     workerCount,
@@ -1241,9 +1463,9 @@ function createProgressState(tasks, workerCount, preflightPlan) {
   };
 }
 
-function logTaskProgress(state, task, event) {
+function logTaskProgress(state: ProgressState, task: ScanTask, event: TaskProgressEvent): void {
   const rootLabel = normalizeForDisplay(task.rootPath);
-  const taskPlan = state.taskPlanById.get(task.id);
+  const taskPlan = state.taskPlanById.get(String(task.id));
 
   if (event.phase === 'task-started') {
     state.startedTasks += 1;
@@ -1269,14 +1491,14 @@ function logTaskProgress(state, task, event) {
 
   if (event.phase === 'discovery-complete') {
     console.log(
-      `${formatOverallPrefix(state)} task ${task.id} discovery ${rootLabel} dirs=${event.directoriesVisited} candidate_files=${event.candidateFilesDiscovered} node_modules_roots=${event.nodeModulesRootsDiscovered} in ${formatDuration(event.elapsedMs)}`,
+      `${formatOverallPrefix(state)} task ${task.id} discovery ${rootLabel} dirs=${event.directoriesVisited} candidate_files=${event.candidateFilesDiscovered} node_modules_roots=${event.nodeModulesRootsDiscovered} in ${formatDuration(event.elapsedMs ?? 0)}`,
     );
     return;
   }
 
   if (event.phase === 'project-semantic-complete') {
     console.log(
-      `${formatOverallPrefix(state)} task ${task.id} project-semantic ${rootLabel} files=${event.candidateFilesProcessed} in ${formatDuration(event.elapsedMs)}`,
+      `${formatOverallPrefix(state)} task ${task.id} project-semantic ${rootLabel} files=${event.candidateFilesProcessed} in ${formatDuration(event.elapsedMs ?? 0)}`,
     );
     return;
   }
@@ -1290,7 +1512,7 @@ function logTaskProgress(state, task, event) {
 
   if (event.phase === 'project-rg-complete') {
     console.log(
-      `${formatOverallPrefix(state)} task ${task.id} project-rg ${rootLabel} matched_files=${event.matchedFiles} in ${formatDuration(event.elapsedMs)}`,
+      `${formatOverallPrefix(state)} task ${task.id} project-rg ${rootLabel} matched_files=${event.matchedFiles} in ${formatDuration(event.elapsedMs ?? 0)}`,
     );
     return;
   }
@@ -1304,7 +1526,7 @@ function logTaskProgress(state, task, event) {
 
   if (event.phase === 'node-modules-complete') {
     console.log(
-      `${formatOverallPrefix(state)} task ${task.id} node-modules ${rootLabel} installed_packages=${event.installedPackagesScanned} node_modules_dirs=${event.nodeModulesDirectoriesVisited} matched_files=${event.matchedFiles} in ${formatDuration(event.elapsedMs)}`,
+      `${formatOverallPrefix(state)} task ${task.id} node-modules ${rootLabel} installed_packages=${event.installedPackagesScanned} node_modules_dirs=${event.nodeModulesDirectoriesVisited} matched_files=${event.matchedFiles} in ${formatDuration(event.elapsedMs ?? 0)}`,
     );
     return;
   }
@@ -1314,12 +1536,16 @@ function logTaskProgress(state, task, event) {
     state.completedTasks += 1;
     state.completedWorkUnits += taskPlan?.workUnits ?? 1;
     console.log(
-      `${formatOverallPrefix(state)} task ${task.id} done ${rootLabel} total=${formatDuration(event.elapsedMs)} dirs=${event.directoriesVisited} candidate_files=${event.candidateFilesVisited} node_modules_dirs=${event.nodeModulesDirsVisited}`,
+      `${formatOverallPrefix(state)} task ${task.id} done ${rootLabel} total=${formatDuration(event.elapsedMs ?? 0)} dirs=${event.directoriesVisited} candidate_files=${event.candidateFilesVisited} node_modules_dirs=${event.nodeModulesDirsVisited}`,
     );
   }
 }
 
-function logOverallProgress(state, phase, details = {}) {
+function logOverallProgress(
+  state: ProgressState,
+  phase: 'planned' | 'heartbeat',
+  details: { mode?: string; totalTasks?: number; progressModel?: string; summary?: string } = {},
+): void {
   if (phase === 'planned') {
     console.log(
       `${formatOverallPrefix(state)} planned mode=${details.mode} tasks=${details.totalTasks} workers=${state.workerCount} progress_model=${details.progressModel}`,
@@ -1333,7 +1559,7 @@ function logOverallProgress(state, phase, details = {}) {
   }
 }
 
-function formatOverallPrefix(state) {
+function formatOverallPrefix(state: ProgressState): string {
   const completedUnits = state.completedWorkUnits + getActiveWorkUnits(state);
   const percent = state.totalWorkUnits === 0
     ? 100
@@ -1341,7 +1567,7 @@ function formatOverallPrefix(state) {
   return `[scan][${state.completedTasks}/${state.totalTasks} tasks][${String(percent).padStart(3, ' ')}% overall][active ${state.activeTasks.size}/${state.workerCount}][+${formatDuration(Date.now() - state.startedAt)}]`;
 }
 
-function formatDuration(durationMs) {
+function formatDuration(durationMs: number): string {
   const safeDurationMs = Math.max(0, durationMs);
   const totalSeconds = Math.floor(safeDurationMs / 1000);
   const hours = Math.floor(totalSeconds / 3600);
@@ -1351,7 +1577,7 @@ function formatDuration(durationMs) {
   return `${[hours, minutes, seconds].map((value) => String(value).padStart(2, '0')).join(':')}.${String(milliseconds).padStart(3, '0')}`;
 }
 
-function getActiveWorkUnits(state) {
+function getActiveWorkUnits(state: ProgressState): number {
   let activeUnits = 0;
   for (const activeTask of state.activeTasks.values()) {
     activeUnits += (activeTask.workUnits ?? 1) * (activeTask.progressFraction ?? 0);
@@ -1359,7 +1585,7 @@ function getActiveWorkUnits(state) {
   return activeUnits;
 }
 
-function phaseToProgressFraction(phase) {
+function phaseToProgressFraction(phase: TaskProgressPhase): number {
   switch (phase) {
     case 'task-started':
       return 0.01;
@@ -1381,7 +1607,10 @@ function phaseToProgressFraction(phase) {
   }
 }
 
-function startScanHeartbeat(state, options) {
+function startScanHeartbeat(
+  state: ProgressState,
+  options: WorkerPoolOptions,
+): ReturnType<typeof setInterval> | null {
   if (!options.verbose || !options.heartbeatMs || options.heartbeatMs < 1) {
     return null;
   }
@@ -1410,7 +1639,7 @@ function startScanHeartbeat(state, options) {
   }, heartbeatMs);
 }
 
-function stopScanHeartbeat(timer) {
+function stopScanHeartbeat(timer: ReturnType<typeof setInterval> | null): void {
   if (timer) {
     clearInterval(timer);
   }

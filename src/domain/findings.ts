@@ -14,6 +14,19 @@ export interface FindingRecord {
   [key: string]: unknown;
 }
 
+export interface FindingInput {
+  type: string;
+  message: string;
+  path?: string;
+  packageName?: string;
+  version?: string;
+  indicator?: string;
+  rule?: string;
+  campaignId?: string;
+  confidence?: FindingConfidence;
+  [key: string]: unknown;
+}
+
 export interface FindingsContainer {
   exactHits: FindingRecord[];
   heuristicHits: FindingRecord[];
@@ -32,7 +45,7 @@ export function createFindingsContainer(): FindingsContainer {
   };
 }
 
-export function addFinding(targetArray: FindingRecord[], finding: Omit<FindingRecord, '_key'>): void {
+export function addFinding(targetArray: FindingRecord[], finding: FindingInput): void {
   const key = JSON.stringify([
     finding.type,
     finding.path ?? '',
@@ -54,7 +67,7 @@ export function mergeFindings(target: FindingsContainer, source: FindingsContain
   }
 }
 
-export function stripInternalKeys(items: readonly FindingRecord[]): Omit<FindingRecord, '_key'>[] {
+export function stripInternalKeys(items: readonly FindingRecord[]): FindingInput[] {
   return items.map(({ _key, ...rest }) => rest);
 }
 

@@ -17,12 +17,30 @@ const SCRIPT_FILE_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = path.dirname(SCRIPT_FILE_PATH);
 const DEFAULT_PROJECT_ROOT = detectProjectRoot(SCRIPT_DIR);
 
+type ScanMode = typeof SCAN_MODE_MACHINE | typeof SCAN_MODE_PROJECT;
+type GovernanceAudit = ReturnType<typeof auditPnpmGovernance>;
+
+interface PnpmGovernanceCliArgs {
+  roots: string[];
+  mode: ScanMode;
+  includeTrash: boolean;
+  jsonPath: string | '-' | null;
+  help: boolean;
+}
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
 export async function main() {
-  let args;
+  let args: PnpmGovernanceCliArgs;
   try {
     args = parseArgs(process.argv.slice(2));
   } catch (error) {
-    console.error(`Argument error: ${error.message}`);
+    console.error(`Argument error: ${toErrorMessage(error)}`);
     console.error('Use --help for usage.');
     process.exitCode = 2;
     return;
@@ -52,7 +70,7 @@ export async function main() {
       payload: toSerializablePnpmGovernanceResult(governanceAudit, args),
     });
   } catch (error) {
-    console.error(`Could not write JSON report: ${error.message}`);
+    console.error(`Could not write JSON report: ${toErrorMessage(error)}`);
     process.exitCode = 2;
     return;
   }
@@ -93,20 +111,24 @@ Examples:
 `);
 }
 
-function parseArgs(argv) {
-  const args = {
+function parseArgs(argv: readonly string[]): PnpmGovernanceCliArgs {
+  const args: PnpmGovernanceCliArgs = {
     roots: [],
     mode: SCAN_MODE_PROJECT,
     includeTrash: false,
     jsonPath: null,
+    help: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
+    if (typeof token !== 'string') {
+      continue;
+    }
 
     if (token === '--root' || token === '--roots') {
       const value = argv[index + 1];
-      if (!value) {
+      if (typeof value !== 'string' || value.length === 0) {
         throw new Error(`${token} requires a path or comma-separated paths`);
       }
       appendCliRoots(args.roots, value, token);
@@ -126,7 +148,7 @@ function parseArgs(argv) {
 
     if (token === '--json') {
       const value = argv[index + 1];
-      if (!value) {
+      if (typeof value !== 'string' || value.length === 0) {
         throw new Error('--json requires a path or "-"');
       }
       args.jsonPath = value;
@@ -153,8 +175,8 @@ function parseArgs(argv) {
   return args;
 }
 
-function appendCliRoots(target, rawValue, optionName) {
-  if (typeof rawValue !== 'string' || rawValue.trim().length === 0) {
+function appendCliRoots(target: string[], rawValue: string, optionName: string): void {
+  if (rawValue.trim().length === 0) {
     throw new Error(`${optionName} requires at least one path`);
   }
 
@@ -169,7 +191,7 @@ function appendCliRoots(target, rawValue, optionName) {
   target.push(...parts);
 }
 
-function resolveRoots(args) {
+function resolveRoots(args: PnpmGovernanceCliArgs): string[] {
   const rawRoots = args.mode === SCAN_MODE_MACHINE
     ? enumerateMachineRoots()
     : args.roots.length > 0
@@ -179,7 +201,7 @@ function resolveRoots(args) {
   return [...new Set(rawRoots.map((rootPath) => path.resolve(rootPath)))];
 }
 
-function renderStandaloneGovernanceSummary(args, governanceAudit) {
+function renderStandaloneGovernanceSummary(args: PnpmGovernanceCliArgs, governanceAudit: GovernanceAudit): void {
   console.log('');
   console.log('=== PNPM governance scan summary ===');
   console.log(`Mode: ${args.mode}`);

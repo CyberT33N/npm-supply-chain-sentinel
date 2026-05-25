@@ -1,7 +1,10 @@
 import path from 'node:path';
 import process from 'node:process';
 
-import { stripInternalKeys, summarizeFindings } from '../domain/findings';
+import type { GovernanceAudit } from '../application/pnpm-governance';
+import type { PreflightPlan } from '../application/preflight';
+import type { ScanStats } from '../application/scanner';
+import { stripInternalKeys, summarizeFindings, type FindingRecord, type FindingsContainer } from '../domain/findings';
 import {
   ANSI_COLORS,
   STATUS_ERROR_SYMBOL,
@@ -11,9 +14,24 @@ import {
   dataset,
 } from '../domain/policy';
 import { normalizeForDisplay } from '../infrastructure/fs-utils';
+import type { BlocklistPaths, FirewallAudit, HostsAudit } from '../infrastructure/remediation';
 import { renderPnpmGovernanceAudit, serializeGovernanceAudit } from './pnpm-governance-reporting';
 
-export function colorize(text, colorName) {
+interface RenderableScanOptions {
+  mode: string;
+  roots: string[];
+  includeHome: boolean;
+  includeTrash: boolean;
+  verbose: boolean;
+}
+
+interface GroupedLimitation {
+  type: string;
+  parentPath: string;
+  count: number;
+}
+
+export function colorize(text: string, colorName: keyof typeof ANSI_COLORS): string {
   if (!process.stdout.isTTY) {
     return text;
   }
@@ -24,7 +42,18 @@ export function colorize(text, colorName) {
   return `${color}${text}${ANSI_COLORS.reset}`;
 }
 
-export function renderSummary(findings, options, blocklistPaths, scanStats, workersUsed, hostsAudit, firewallAudit, preflightPlan, ripgrepVersion, governanceAudit) {
+export function renderSummary(
+  findings: FindingsContainer,
+  options: RenderableScanOptions,
+  blocklistPaths: BlocklistPaths | null,
+  scanStats: ScanStats,
+  workersUsed: number,
+  hostsAudit: HostsAudit,
+  firewallAudit: FirewallAudit | null,
+  preflightPlan: PreflightPlan | null,
+  ripgrepVersion: string,
+  governanceAudit: GovernanceAudit | null | undefined,
+): void {
   const { exactCount, heuristicCount, artifactCount, limitationCount, errorCount } = summarizeFindings(findings);
 
   console.log('');
@@ -66,8 +95,12 @@ export function renderSummary(findings, options, blocklistPaths, scanStats, work
     if (preflightPlan.heaviestTasks.length > 0) {
       console.log('Heaviest planned tasks:');
       for (const taskPlan of preflightPlan.heaviestTasks) {
+        const inventory = taskPlan.inventory;
+        if (!inventory) {
+          continue;
+        }
         console.log(
-          `- ${normalizeForDisplay(taskPlan.rootPath)} (work=${taskPlan.workUnits}, dirs=${taskPlan.inventory.directoriesVisited}, files=${taskPlan.inventory.filesVisited}, candidateFiles=${taskPlan.inventory.candidateFilesDiscovered}, nodeModulesRoots=${taskPlan.inventory.nodeModulesRootsDiscovered})`,
+          `- ${normalizeForDisplay(taskPlan.rootPath)} (work=${taskPlan.workUnits}, dirs=${inventory.directoriesVisited}, files=${inventory.filesVisited}, candidateFiles=${inventory.candidateFilesDiscovered}, nodeModulesRoots=${inventory.nodeModulesRootsDiscovered})`,
         );
       }
       console.log('');
@@ -144,7 +177,18 @@ export function renderSummary(findings, options, blocklistPaths, scanStats, work
   }
 }
 
-export function toSerializableResult(findings, options, blocklistPaths, scanStats, workersUsed, hostsAudit, firewallAudit, preflightPlan, ripgrepVersion, governanceAudit) {
+export function toSerializableResult(
+  findings: FindingsContainer,
+  options: RenderableScanOptions,
+  blocklistPaths: BlocklistPaths | null,
+  scanStats: ScanStats,
+  workersUsed: number,
+  hostsAudit: HostsAudit,
+  firewallAudit: FirewallAudit | null,
+  preflightPlan: PreflightPlan | null,
+  ripgrepVersion: string,
+  governanceAudit: GovernanceAudit | null | undefined,
+) {
   const summary = summarizeFindings(findings);
   return {
     scanner: 'CyberT33N-supply-chain-2026',
@@ -218,11 +262,11 @@ export function toSerializableResult(findings, options, blocklistPaths, scanStat
   };
 }
 
-function renderScanLimitations(limitations) {
+function renderScanLimitations(limitations: readonly FindingRecord[]): void {
   console.log('Excluded / unreadable technical areas (not treated as scanner errors):');
 
-  const directFindings = [];
-  const groupedFindings = new Map();
+  const directFindings: FindingRecord[] = [];
+  const groupedFindings = new Map<string, GroupedLimitation>();
 
   for (const finding of limitations) {
     if (!finding?.path || !['unreadable-directory', 'unreadable-file'].includes(finding.type)) {
@@ -232,7 +276,7 @@ function renderScanLimitations(limitations) {
 
     const parentPath = normalizeForDisplay(path.dirname(finding.path));
     const key = `${finding.type}:${parentPath}`;
-    const existing = groupedFindings.get(key) ?? {
+    const existing: GroupedLimitation = groupedFindings.get(key) ?? {
       type: finding.type,
       parentPath,
       count: 0,
@@ -260,7 +304,7 @@ function renderScanLimitations(limitations) {
   console.log('');
 }
 
-function renderHostsAudit(hostsAudit) {
+function renderHostsAudit(hostsAudit: HostsAudit): void {
   console.log(`Hosts file audit: ${normalizeForDisplay(hostsAudit.path)}`);
   if (!hostsAudit.readable) {
     console.log(
@@ -292,7 +336,7 @@ function renderHostsAudit(hostsAudit) {
   console.log('');
 }
 
-function renderFirewallAudit(firewallAudit) {
+function renderFirewallAudit(firewallAudit: FirewallAudit | null): void {
   if (!firewallAudit) {
     return;
   }

@@ -53,15 +53,6 @@
      */
     "alwaysStrict": true,
 
-    /**
-     * Base directory for path aliases (project-specific; do not change).
-     * Example:.
-     * ```ts
-     * // Instead of: import x from "../../src/a/b"
-     * // With paths: import x from "@/a/b"
-     * ```
-     */
-    "baseUrl": ".",
     "declaration": true,
     "declarationMap": true,
 
@@ -297,8 +288,9 @@
      * Path aliases (project requirement; do not change).
      */
     "paths": {
-      "@mocks/*": ["__mocks__/*"],
-      "@test/*": ["test/*"]
+      "jest-extended": ["./test/shims/jest-extended"],
+      "@mocks/*": ["./__mocks__/*"],
+      "@test/*": ["./test/*"]
     },
 
     /**

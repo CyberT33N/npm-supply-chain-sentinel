@@ -117,7 +117,7 @@ export function detectLineEnding(text: string): string {
   return text.includes('\r\n') ? '\r\n' : '\n';
 }
 
-export function platformMatches(platforms?: readonly NodeJS.Platform[]): boolean {
+export function platformMatches(platforms?: readonly string[]): boolean {
   return !platforms || platforms.includes(process.platform);
 }
 

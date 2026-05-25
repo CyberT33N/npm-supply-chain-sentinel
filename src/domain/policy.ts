@@ -4,6 +4,10 @@ import { dataset } from '../data/supply-chain-campaigns-2026';
 
 export { dataset };
 
+export type SupplyChainDataset = typeof dataset;
+type ExactPackageVersionRule = SupplyChainDataset['exactPackageVersionRules'][number];
+type SuspiciousPackageFileRule = SupplyChainDataset['suspiciousPackageFileRules'][number];
+
 export const TEXT_ENCODINGS = ['utf8', 'latin1'] as const satisfies readonly BufferEncoding[];
 export const PACKAGE_JSON_NAME = 'package.json';
 export const LOCKFILE_NAMES = new Set([
@@ -124,10 +128,8 @@ export const workflowSupportIndicators = new Set([
 ]);
 export const ripgrepLiteralPatterns = buildRipgrepLiteralPatterns();
 
-export type SupplyChainDataset = typeof dataset;
-
-function buildExactRuleCandidatesByName() {
-  const map = new Map();
+function buildExactRuleCandidatesByName(): Map<string, ExactPackageVersionRule[]> {
+  const map = new Map<string, ExactPackageVersionRule[]>();
   for (const rule of dataset.exactPackageVersionRules) {
     const list = map.get(rule.name) ?? [];
     list.push(rule);
@@ -136,10 +138,10 @@ function buildExactRuleCandidatesByName() {
   return map;
 }
 
-function buildSuspiciousPresenceBasenameRules() {
-  const map = new Map();
-  const register = (basename, reason) => {
-    if (!basename) {
+function buildSuspiciousPresenceBasenameRules(): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  const register = (basename: string | undefined, reason: string): void => {
+    if (typeof basename !== 'string' || basename.length === 0) {
       return;
     }
     const list = map.get(basename) ?? [];
@@ -149,25 +151,28 @@ function buildSuspiciousPresenceBasenameRules() {
 
   for (const rule of dataset.suspiciousAbsolutePathRules) {
     const parts = rule.path.split('/');
-    register(parts[parts.length - 1], rule.reason);
+    register(parts.at(-1), rule.reason);
   }
   for (const rule of dataset.suspiciousHomePathPresenceRules) {
     const parts = rule.path.split('/');
-    register(parts[parts.length - 1], rule.reason);
+    register(parts.at(-1), rule.reason);
   }
   for (const rule of dataset.suspiciousWindowsPathRules) {
     const parts = rule.suffix.split(/[\\/]/u);
-    register(parts[parts.length - 1], rule.reason);
+    register(parts.at(-1), rule.reason);
   }
 
   return map;
 }
 
-function buildSuspiciousPackageFileRulesByBasename() {
-  const map = new Map();
+function buildSuspiciousPackageFileRulesByBasename(): Map<string, SuspiciousPackageFileRule[]> {
+  const map = new Map<string, SuspiciousPackageFileRule[]>();
   for (const rule of dataset.suspiciousPackageFileRules) {
     const parts = rule.relativePath.split('/');
-    const basename = parts[parts.length - 1];
+    const basename = parts.at(-1);
+    if (typeof basename !== 'string' || basename.length === 0) {
+      continue;
+    }
     const list = map.get(basename) ?? [];
     list.push(rule);
     map.set(basename, list);
@@ -175,8 +180,8 @@ function buildSuspiciousPackageFileRulesByBasename() {
   return map;
 }
 
-function buildRipgrepLiteralPatterns() {
-  const patterns = new Set();
+function buildRipgrepLiteralPatterns(): string[] {
+  const patterns = new Set<string>();
 
   for (const indicator of broadContentIndicators) {
     patterns.add(indicator);

@@ -1,5 +1,10 @@
 import process from 'node:process';
 
+import type {
+  GovernanceAudit,
+  GovernanceProjectReport,
+  GovernanceProjectTopology,
+} from '../application/pnpm-governance';
 import {
   ANSI_COLORS,
   STATUS_ERROR_SYMBOL,
@@ -8,7 +13,21 @@ import {
 } from '../domain/policy';
 import { normalizeForDisplay } from '../infrastructure/fs-utils';
 
-export function renderPnpmGovernanceAudit(governanceAudit) {
+interface StandaloneGovernanceOptions {
+  mode?: string;
+  roots?: string[];
+  includeTrash?: boolean;
+}
+
+function getPackageName(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null || !('name' in value)) {
+    return null;
+  }
+  const packageName = value['name'];
+  return typeof packageName === 'string' ? packageName : null;
+}
+
+export function renderPnpmGovernanceAudit(governanceAudit: GovernanceAudit | null | undefined): void {
   if (!governanceAudit) {
     return;
   }
@@ -85,7 +104,7 @@ export function renderPnpmGovernanceAudit(governanceAudit) {
   console.log('');
 }
 
-export function serializeGovernanceAudit(governanceAudit) {
+export function serializeGovernanceAudit(governanceAudit: GovernanceAudit | null | undefined) {
   if (!governanceAudit) {
     return null;
   }
@@ -113,14 +132,18 @@ export function serializeGovernanceAudit(governanceAudit) {
       summary: project.summary,
       workspaceMembers: project.workspaceMembers.map((member) => ({
         rootPath: normalizeForDisplay(member.rootPath),
-        packageName: member.packageJson?.value?.name ?? null,
+        packageName: getPackageName(member.packageJson.value),
       })),
       checks: project.checks,
     })),
   };
 }
 
-export function toSerializablePnpmGovernanceResult(governanceAudit, options = {}) {
+export function toSerializablePnpmGovernanceResult(
+  governanceAudit: GovernanceAudit | null | undefined,
+  options: StandaloneGovernanceOptions = {},
+) {
+  const roots = Array.isArray(options.roots) ? options.roots : [];
   return {
     scanner: 'pnpm-governance-audit',
     generatedAt: new Date().toISOString(),
@@ -133,13 +156,13 @@ export function toSerializablePnpmGovernanceResult(governanceAudit, options = {}
     runtimeDependencies: {
       pnpm: governanceAudit?.pnpmRuntime?.version ?? null,
     },
-    roots: (options.roots ?? []).map((rootPath) => normalizeForDisplay(rootPath)),
+    roots: roots.map((rootPath) => normalizeForDisplay(rootPath)),
     includeTrash: Boolean(options.includeTrash),
     governance: serializeGovernanceAudit(governanceAudit),
   };
 }
 
-function colorize(text, colorName) {
+function colorize(text: string, colorName: keyof typeof ANSI_COLORS): string {
   if (!process.stdout.isTTY) {
     return text;
   }
@@ -150,7 +173,11 @@ function colorize(text, colorName) {
   return `${color}${text}${ANSI_COLORS.reset}`;
 }
 
-function statusPresentation(status) {
+function statusPresentation(status: GovernanceProjectReport['status']): {
+  symbol: string;
+  colorName: keyof typeof ANSI_COLORS;
+  label: GovernanceProjectReport['status'];
+} {
   if (status === 'passed') {
     return {
       symbol: STATUS_OK_SYMBOL,
@@ -172,8 +199,8 @@ function statusPresentation(status) {
   };
 }
 
-function summarizePassHighlights(project) {
-  const highlights = [];
+function summarizePassHighlights(project: GovernanceProjectReport): string[] {
+  const highlights: string[] = [];
   if (hasOkCheck(project, 'saveExact')) {
     highlights.push('save_exact=true');
   }
@@ -183,11 +210,11 @@ function summarizePassHighlights(project) {
   return highlights;
 }
 
-function hasOkCheck(project, property) {
+function hasOkCheck(project: GovernanceProjectReport, property: string): boolean {
   return project.checks.some((check) => check.status === 'ok' && check.property === property);
 }
 
-function formatProjectHeading(project) {
+function formatProjectHeading(project: GovernanceProjectReport): string {
   const lineageDisplayPaths = project.topology?.lineageDisplayPaths ?? [project.displayPath];
   const pathLabel = lineageDisplayPaths.join(' -> ');
   const kindLabel = project.topology?.role === 'nested-domain'
@@ -196,7 +223,7 @@ function formatProjectHeading(project) {
   return `${pathLabel} [${kindLabel}]`;
 }
 
-function serializeProjectTopology(topology) {
+function serializeProjectTopology(topology: GovernanceProjectTopology | null | undefined) {
   if (!topology) {
     return null;
   }

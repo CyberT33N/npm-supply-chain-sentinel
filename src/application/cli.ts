@@ -37,19 +37,57 @@ import {
   PREFLIGHT_MODE_FAST,
   buildPreflightPlan,
   formatTaskPlanSummary,
+  type PreflightMode,
+  type PreflightPlan,
+  type PreflightProgressEvent,
 } from './preflight';
 
 const SCRIPT_FILE_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = path.dirname(SCRIPT_FILE_PATH);
 const DEFAULT_PROJECT_ROOT = detectProjectRoot(SCRIPT_DIR);
 
+type ScanMode = typeof SCAN_MODE_MACHINE | typeof SCAN_MODE_PROJECT;
+
+interface StageLogger {
+  index: number;
+  startedAt: number;
+}
+
+interface CliArgs {
+  roots: string[];
+  mode: ScanMode;
+  workers: number;
+  includeHome: boolean;
+  jsonPath: string | '-' | null;
+  writeBlocklistsDir: string | null;
+  applyHosts: boolean;
+  applyFirewall: boolean;
+  hostsPath: string | null;
+  includeTrash: boolean;
+  preflight: PreflightMode;
+  heartbeatMs: number;
+  verbose: boolean;
+  help: boolean;
+}
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function isPreflightMode(value: string): value is PreflightMode {
+  return value === PREFLIGHT_MODE_FAST || value === PREFLIGHT_MODE_DEEP;
+}
+
 export async function main() {
   const stageLogger = createStageLogger();
-  let args;
+  let args: CliArgs;
   try {
     args = parseArgs(process.argv.slice(2));
   } catch (error) {
-    console.error(`Argument error: ${error.message}`);
+    console.error(`Argument error: ${toErrorMessage(error)}`);
     console.error('Use --help for usage.');
     process.exitCode = 2;
     return;
@@ -64,7 +102,7 @@ export async function main() {
   try {
     ripgrepVersion = ensureRipgrepInstalled();
   } catch (error) {
-    console.error(`Dependency error: ${error.message}`);
+    console.error(`Dependency error: ${toErrorMessage(error)}`);
     process.exitCode = 2;
     return;
   }
@@ -138,7 +176,7 @@ export async function main() {
       addFinding(findings.errors, {
         type: 'blocklist-write-error',
         path: normalizeForDisplay(args.writeBlocklistsDir),
-        message: `Could not write blocklists to ${args.writeBlocklistsDir}: ${error.message}`,
+        message: `Could not write blocklists to ${args.writeBlocklistsDir}: ${toErrorMessage(error)}`,
       });
     }
   }
@@ -154,7 +192,7 @@ export async function main() {
       addFinding(findings.errors, {
         type: 'hosts-apply-error',
         path: normalizeForDisplay(hostsPath),
-        message: `Could not apply hosts blocklist to ${normalizeForDisplay(hostsPath)}: ${error.message}`,
+        message: `Could not apply hosts blocklist to ${normalizeForDisplay(hostsPath)}: ${toErrorMessage(error)}`,
       });
     }
   }
@@ -218,7 +256,7 @@ export async function main() {
       payload,
     });
   } catch (error) {
-    console.error(`Could not write JSON report: ${error.message}`);
+    console.error(`Could not write JSON report: ${toErrorMessage(error)}`);
     process.exitCode = 2;
     return;
   }
@@ -287,8 +325,8 @@ Notes:
 `);
 }
 
-function parseArgs(argv) {
-  const args = {
+function parseArgs(argv: readonly string[]): CliArgs {
+  const args: CliArgs = {
     roots: [],
     mode: SCAN_MODE_PROJECT,
     workers: DEFAULT_WORKER_COUNT,
@@ -302,14 +340,18 @@ function parseArgs(argv) {
     preflight: PREFLIGHT_MODE_DEEP,
     heartbeatMs: 10_000,
     verbose: true,
+    help: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
+    if (typeof token !== 'string') {
+      continue;
+    }
 
     if (token === '--root') {
       const value = argv[index + 1];
-      if (!value) {
+      if (typeof value !== 'string' || value.length === 0) {
         throw new Error('--root requires a path');
       }
       args.roots.push(value);
@@ -324,7 +366,7 @@ function parseArgs(argv) {
 
     if (token === '--workers') {
       const value = argv[index + 1];
-      if (!value) {
+      if (typeof value !== 'string' || value.length === 0) {
         throw new Error('--workers requires a positive integer');
       }
       const parsed = Number.parseInt(value, 10);
@@ -343,7 +385,7 @@ function parseArgs(argv) {
 
     if (token === '--json') {
       const value = argv[index + 1];
-      if (!value) {
+      if (typeof value !== 'string' || value.length === 0) {
         throw new Error('--json requires a path or "-"');
       }
       args.jsonPath = value;
@@ -353,7 +395,7 @@ function parseArgs(argv) {
 
     if (token === '--write-blocklists') {
       const value = argv[index + 1];
-      if (!value) {
+      if (typeof value !== 'string' || value.length === 0) {
         throw new Error('--write-blocklists requires a directory path');
       }
       args.writeBlocklistsDir = value;
@@ -373,7 +415,7 @@ function parseArgs(argv) {
 
     if (token === '--hosts-path') {
       const value = argv[index + 1];
-      if (!value) {
+      if (typeof value !== 'string' || value.length === 0) {
         throw new Error('--hosts-path requires a path');
       }
       args.hostsPath = value;
@@ -393,7 +435,7 @@ function parseArgs(argv) {
 
     if (token === '--preflight') {
       const value = argv[index + 1];
-      if (!value || ![PREFLIGHT_MODE_FAST, PREFLIGHT_MODE_DEEP].includes(value)) {
+      if (typeof value !== 'string' || !isPreflightMode(value)) {
         throw new Error('--preflight requires "fast" or "deep"');
       }
       args.preflight = value;
@@ -446,14 +488,14 @@ function parseArgs(argv) {
   return args;
 }
 
-function createStageLogger() {
+function createStageLogger(): StageLogger {
   return {
     index: 0,
     startedAt: Date.now(),
   };
 }
 
-function logStageIfVerbose(stageLogger, args, stageName, detail) {
+function logStageIfVerbose(stageLogger: StageLogger, args: CliArgs, stageName: string, detail: string): void {
   if (!args.verbose) {
     return;
   }
@@ -463,7 +505,7 @@ function logStageIfVerbose(stageLogger, args, stageName, detail) {
   );
 }
 
-function formatStageDuration(durationMs) {
+function formatStageDuration(durationMs: number): string {
   const safeDurationMs = Math.max(0, durationMs);
   const totalSeconds = Math.floor(safeDurationMs / 1000);
   const hours = Math.floor(totalSeconds / 3600);
@@ -473,7 +515,7 @@ function formatStageDuration(durationMs) {
   return `${[hours, minutes, seconds].map((value) => String(value).padStart(2, '0')).join(':')}.${String(milliseconds).padStart(3, '0')}`;
 }
 
-function logPreflightIfVerbose(stageLogger, args, event) {
+function logPreflightIfVerbose(stageLogger: StageLogger, args: CliArgs, event: PreflightProgressEvent): void {
   if (!args.verbose || args.preflight !== PREFLIGHT_MODE_DEEP) {
     return;
   }
@@ -500,14 +542,24 @@ function logPreflightIfVerbose(stageLogger, args, event) {
   }
 }
 
-function buildPreflightCompleteDetail(rootCount, taskCount, executionTaskCount, args, preflightPlan) {
+function buildPreflightCompleteDetail(
+  rootCount: number,
+  taskCount: number,
+  executionTaskCount: number,
+  args: CliArgs,
+  preflightPlan: PreflightPlan,
+): string {
   if (preflightPlan.mode === PREFLIGHT_MODE_DEEP) {
     return `Resolved roots=${rootCount} source_tasks=${taskCount} execution_tasks=${executionTaskCount} requested_workers=${args.workers} preflight=${preflightPlan.mode} total_dirs=${preflightPlan.totals.directoriesVisited} total_files=${preflightPlan.totals.filesVisited} candidate_files=${preflightPlan.totals.candidateFilesDiscovered} node_modules_roots=${preflightPlan.totals.nodeModulesRootsDiscovered} split_tasks=${preflightPlan.splitSummary?.splitTaskCount ?? 0}`;
   }
   return `Resolved roots=${rootCount} source_tasks=${taskCount} execution_tasks=${executionTaskCount} requested_workers=${args.workers} preflight=${preflightPlan.mode}`;
 }
 
-function logHeaviestPreflightTasksIfVerbose(stageLogger, args, preflightPlan) {
+function logHeaviestPreflightTasksIfVerbose(
+  stageLogger: StageLogger,
+  args: CliArgs,
+  preflightPlan: PreflightPlan,
+): void {
   if (!args.verbose || preflightPlan.mode !== PREFLIGHT_MODE_DEEP) {
     return;
   }

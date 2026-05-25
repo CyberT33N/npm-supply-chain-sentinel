@@ -61,7 +61,15 @@
     "yaml": "catalog:"
   },
   "devDependencies": {
+    "@sindresorhus/is": "catalog:",
     "@types/node": "catalog:",
-    "typescript": "catalog:"
+    "@types/semver": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "dotenv": "catalog:",
+    "jest-extended": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-tsconfig-paths": "catalog:",
+    "vitest": "catalog:"
   }
 }
