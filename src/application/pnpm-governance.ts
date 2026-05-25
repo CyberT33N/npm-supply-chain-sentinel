@@ -26,8 +26,8 @@ import {
   isAllowedProjectNpmrcKey,
   isForbiddenProjectTokenHelperKey,
   isGovernanceDiscoveryExcludedDirName,
-} from '../domain/pnpm-governance.mjs';
-import { SCAN_MODE_MACHINE } from '../domain/policy.mjs';
+} from '../domain/pnpm-governance';
+import { SCAN_MODE_MACHINE } from '../domain/policy';
 import {
   direntIsDirectory,
   fileExists,
@@ -36,8 +36,8 @@ import {
   readFileTextSafe,
   readJsonSafe,
   statSafe,
-} from '../infrastructure/fs-utils.mjs';
-import { commandExists, runCommand } from '../infrastructure/process-utils.mjs';
+} from '../infrastructure/fs-utils';
+import { commandExists, runCommand } from '../infrastructure/process-utils';
 
 const GITIGNORE_BASENAME = '.gitignore';
 const PACKAGE_JSON_BASENAME = 'package.json';

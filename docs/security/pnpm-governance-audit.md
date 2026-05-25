@@ -31,7 +31,7 @@ The convention document defines the canonical policy.
 The repository provides a governance-only entrypoint:
 
 ```bash
-node src/cli/scan-pnpm-governance.mjs
+node --import tsx src/cli/scan-pnpm-governance.ts
 ```
 
 Every governance-only run refreshes `generated/latest-pnpm-governance-scan.json`.
@@ -39,9 +39,9 @@ Every governance-only run refreshes `generated/latest-pnpm-governance-scan.json`
 Explicit roots can be supplied either as separate positional path arguments or as a single comma-separated token:
 
 ```bash
-node src/cli/scan-pnpm-governance.mjs C:\git
-node src/cli/scan-pnpm-governance.mjs C:\git,C:\Projects
-node src/cli/scan-pnpm-governance.mjs C:\git C:\Projects
+node --import tsx src/cli/scan-pnpm-governance.ts C:\git
+node --import tsx src/cli/scan-pnpm-governance.ts C:\git,C:\Projects
+node --import tsx src/cli/scan-pnpm-governance.ts C:\git C:\Projects
 ```
 
 ## Managed-project discovery model

@@ -43,7 +43,7 @@ pnpm run scan:machine-wide:full
 For remediation, run the command elevated:
 
 ```bash
-sudo node ./src/cli/scan-supply-chain-campaigns.mjs --machine-wide --apply-hosts --apply-firewall
+sudo node --import tsx ./src/cli/scan-supply-chain-campaigns.ts --machine-wide --apply-hosts --apply-firewall
 ```
 
 ### macOS
@@ -51,5 +51,5 @@ sudo node ./src/cli/scan-supply-chain-campaigns.mjs --machine-wide --apply-hosts
 For remediation, run the command elevated:
 
 ```bash
-sudo node ./src/cli/scan-supply-chain-campaigns.mjs --machine-wide --apply-hosts --apply-firewall
+sudo node --import tsx ./src/cli/scan-supply-chain-campaigns.ts --machine-wide --apply-hosts --apply-firewall
 ```

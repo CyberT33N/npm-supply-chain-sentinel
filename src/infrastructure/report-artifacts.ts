@@ -7,11 +7,17 @@ export const GENERATED_REPORTS_DIRNAME = 'generated';
 export const LATEST_FULL_SCAN_REPORT_BASENAME = 'latest-scan.json';
 export const LATEST_PNPM_GOVERNANCE_REPORT_BASENAME = 'latest-pnpm-governance-scan.json';
 
-export function resolveGeneratedReportPath(reportBasename, cwd = process.cwd()) {
+export interface JsonArtifactWriteOptions {
+  latestPath: string;
+  exportPath?: string | null;
+  payload: unknown;
+}
+
+export function resolveGeneratedReportPath(reportBasename: string, cwd = process.cwd()): string {
   return path.resolve(cwd, GENERATED_REPORTS_DIRNAME, reportBasename);
 }
 
-export function writeJsonArtifacts(options) {
+export function writeJsonArtifacts(options: JsonArtifactWriteOptions): string[] {
   const latestPath = options.latestPath;
   const exportPath = options.exportPath ?? null;
   const payload = options.payload;
@@ -39,7 +45,7 @@ export function writeJsonArtifacts(options) {
   return writtenPaths;
 }
 
-function writeJsonArtifact(targetPath, payload) {
+function writeJsonArtifact(targetPath: string, payload: unknown): void {
   const text = `${JSON.stringify(payload, null, 2)}${os.EOL}`;
   if (targetPath === '-') {
     process.stdout.write(text);

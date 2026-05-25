@@ -6,8 +6,8 @@
   "private": true,
   "packageManager": "pnpm@11.2.2",
   "bin": {
-    "npm-supply-chain-sentinel": "./src/cli/scan-supply-chain-campaigns.mjs",
-    "npm-supply-chain-sentinel-pnpm-governance": "./src/cli/scan-pnpm-governance.mjs"
+    "npm-supply-chain-sentinel": "./bin/npm-supply-chain-sentinel.js",
+    "npm-supply-chain-sentinel-pnpm-governance": "./bin/npm-supply-chain-sentinel-pnpm-governance.js"
   },
   "engines": {
     "node": ">=24.16.0"
@@ -25,24 +25,25 @@
     }
   },
   "scripts": {
-    "scan": "node ./src/cli/scan-supply-chain-campaigns.mjs",
-    "scan:project": "node ./src/cli/scan-supply-chain-campaigns.mjs",
-    "scan:project:verbose": "node ./src/cli/scan-supply-chain-campaigns.mjs",
-    "scan:machine-wide": "node ./src/cli/scan-supply-chain-campaigns.mjs --machine-wide",
-    "scan:machine-wide:verbose": "node ./src/cli/scan-supply-chain-campaigns.mjs --machine-wide",
-    "scan:no-home": "node ./src/cli/scan-supply-chain-campaigns.mjs --no-home",
-    "scan:blocklists": "node ./src/cli/scan-supply-chain-campaigns.mjs --write-blocklists ./docs/security/blocklists",
-    "scan:json": "node ./src/cli/scan-supply-chain-campaigns.mjs --json ./generated/latest-scan.json",
-    "scan:apply-hosts": "node ./src/cli/scan-supply-chain-campaigns.mjs --apply-hosts",
-    "scan:apply-firewall": "node ./src/cli/scan-supply-chain-campaigns.mjs --apply-firewall",
-    "scan:machine-wide:full": "node ./src/cli/scan-supply-chain-campaigns.mjs --machine-wide --apply-hosts --apply-firewall",
-    "scan:machine-wide:full:heartbeat-5s": "node ./src/cli/scan-supply-chain-campaigns.mjs --machine-wide --heartbeat-sec 5 --apply-hosts --apply-firewall",
-    "scan:machine-wide:fast-preflight": "node ./src/cli/scan-supply-chain-campaigns.mjs --machine-wide --fast-preflight",
-    "scan:pnpm-governance": "node ./src/cli/scan-pnpm-governance.mjs",
-    "scan:pnpm-governance:json": "node ./src/cli/scan-pnpm-governance.mjs --json ./generated/latest-pnpm-governance-scan.json",
-    "scan:pnpm-governance:help": "node ./src/cli/scan-pnpm-governance.mjs --help",
-    "scan:quiet": "node ./src/cli/scan-supply-chain-campaigns.mjs --quiet",
-    "scan:help": "node ./src/cli/scan-supply-chain-campaigns.mjs --help"
+    "scan": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts",
+    "scan:project": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts",
+    "scan:project:verbose": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts",
+    "scan:machine-wide": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts --machine-wide",
+    "scan:machine-wide:verbose": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts --machine-wide",
+    "scan:no-home": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts --no-home",
+    "scan:blocklists": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts --write-blocklists ./docs/security/blocklists",
+    "scan:json": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts --json ./generated/latest-scan.json",
+    "scan:apply-hosts": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts --apply-hosts",
+    "scan:apply-firewall": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts --apply-firewall",
+    "scan:machine-wide:full": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts --machine-wide --apply-hosts --apply-firewall",
+    "scan:machine-wide:full:heartbeat-5s": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts --machine-wide --heartbeat-sec 5 --apply-hosts --apply-firewall",
+    "scan:machine-wide:fast-preflight": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts --machine-wide --fast-preflight",
+    "scan:pnpm-governance": "node --import tsx ./src/cli/scan-pnpm-governance.ts",
+    "scan:pnpm-governance:json": "node --import tsx ./src/cli/scan-pnpm-governance.ts --json ./generated/latest-pnpm-governance-scan.json",
+    "scan:pnpm-governance:help": "node --import tsx ./src/cli/scan-pnpm-governance.ts --help",
+    "scan:quiet": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts --quiet",
+    "scan:help": "node --import tsx ./src/cli/scan-supply-chain-campaigns.ts --help",
+    "typecheck": "tsc -p ./tsconfig.node.json"
   },
   "keywords": [
     "security",
@@ -56,6 +57,11 @@
   "dependencies": {
     "minimatch": "catalog:",
     "semver": "catalog:",
+    "tsx": "catalog:",
     "yaml": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
   }
 }

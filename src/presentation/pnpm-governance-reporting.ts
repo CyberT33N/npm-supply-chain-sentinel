@@ -5,8 +5,8 @@ import {
   STATUS_ERROR_SYMBOL,
   STATUS_OK_SYMBOL,
   STATUS_WARN_SYMBOL,
-} from '../domain/policy.mjs';
-import { normalizeForDisplay } from '../infrastructure/fs-utils.mjs';
+} from '../domain/policy';
+import { normalizeForDisplay } from '../infrastructure/fs-utils';
 
 export function renderPnpmGovernanceAudit(governanceAudit) {
   if (!governanceAudit) {

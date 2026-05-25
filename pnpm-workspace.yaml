@@ -6,7 +6,8 @@ trustPolicy: no-downgrade
 trustPolicyExclude: []
 blockExoticSubdeps: true
 strictDepBuilds: true
-allowBuilds: {}
+allowBuilds:
+  esbuild: true
 dangerouslyAllowAllBuilds: false
 
 registries:
@@ -39,19 +40,17 @@ autoInstallPeers: false
 strictPeerDependencies: true
 peerDependencyRules:
   ignoreMissing: []
-  allowedVersions: {}
   allowAny: []
-
-overrides: {}
-packageExtensions: {}
-allowedDeprecatedVersions: {}
 ignoreCompatibilityDb: true
 updateNotifier: false
 saveExact: true
 
 catalog:
+  '@types/node': 25.8.0
   minimatch: 10.2.5
   semver: 7.8.0
+  tsx: 4.22.1
+  typescript: 6.0.3
   yaml: 2.9.0
 catalogMode: strict
 cleanupUnusedCatalogs: true

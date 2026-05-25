@@ -1,0 +1,58 @@
+/*
+ *███████████████████████████████████████████████████████████████████████████████
+ *██******************** PRESENTED BY t33n Software ***************************██
+ *██                                                                           ██
+ *██                  ████████╗██████╗ ██████╗ ███╗   ██╗                      ██
+ *██                  ╚══██╔══╝╚════██╗╚════██╗████╗  ██║                      ██
+ *██                     ██║    █████╔╝ █████╔╝██╔██╗ ██║                      ██
+ *██                     ██║    ╚═══██╗ ╚═══██╗██║╚██╗██║                      ██
+ *██                     ██║   ██████╔╝██████╔╝██║ ╚████║                      ██
+ *██                     ╚═╝   ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝                      ██
+ *██                                                                           ██
+ *███████████████████████████████████████████████████████████████████████████████
+ *███████████████████████████████████████████████████████████████████████████████
+ */
+
+{
+  /**
+   * $schema: Better IDE support (completion/validation).
+   */
+  "$schema": "https://json.schemastore.org/tsconfig",
+
+  /**
+   * Extends: Inherit sensible Node defaults for tests.
+   */
+  "extends": "./tsconfig.node.json",
+
+  /**
+   * References: Pull in the Node project (src) instead of re-listing it in include.
+   */
+  
+
+  /**
+   * CompilerOptions: Test runtime specific options.
+   */
+  "compilerOptions": {
+    /**
+     * NoEmit: Only type-check, do not emit JS.
+     */
+    "noEmit": true,
+
+    /**
+     * Types: Provide Vitest globals and Node types in tests.
+     */
+    "types": ["vitest/globals", "node"]
+
+    
+  },
+
+  /**
+   * Include: Source and all runtime test files.
+   */
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts"
+  ]
+}
+
+

@@ -4,7 +4,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { Worker } from 'node:worker_threads';
 
-import { addFinding, createFindingsContainer, mergeFindings } from '../domain/findings.mjs';
+import { addFinding, createFindingsContainer, mergeFindings } from '../domain/findings';
 import {
   EXTRA_SCAN_FILE_BASENAMES,
   LOCKFILE_NAMES,
@@ -19,7 +19,7 @@ import {
   suspiciousPackageFileRulesByBasename,
   suspiciousPresenceBasenameRules,
   workflowSupportIndicators,
-} from '../domain/policy.mjs';
+} from '../domain/policy';
 import {
   direntIsDirectory,
   direntIsFile,
@@ -31,9 +31,9 @@ import {
   readFileTextSafe,
   readJsonSafe,
   statSafe,
-} from '../infrastructure/fs-utils.mjs';
-import { runRipgrepLiteralScan } from '../infrastructure/ripgrep.mjs';
-import { runCommand } from '../infrastructure/process-utils.mjs';
+} from '../infrastructure/fs-utils';
+import { runRipgrepLiteralScan } from '../infrastructure/ripgrep';
+import { runCommand } from '../infrastructure/process-utils';
 
 const broadIndicatorSet = new Set(broadContentIndicators);
 
@@ -1179,7 +1179,11 @@ function recordRipgrepLimitation(findings, fullPath, error, nodeModulesScope) {
 function createWorker(task, onProgress) {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const worker = new Worker(new URL('./scan-worker.mjs', import.meta.url), {
+    const execArgv = process.execArgv.includes('tsx')
+      ? process.execArgv
+      : [...process.execArgv, '--import', 'tsx'];
+    const worker = new Worker(new URL('./scan-worker.ts', import.meta.url), {
+      execArgv,
       workerData: {
         task,
       },

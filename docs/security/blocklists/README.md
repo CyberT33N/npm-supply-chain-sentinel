@@ -13,4 +13,4 @@ These files are generated read models and are not the canonical source of threat
 
 The canonical detection and network indicator source remains:
 
-- `src/data/supply-chain-campaigns-2026.mjs`
+- `src/data/supply-chain-campaigns-2026.ts`

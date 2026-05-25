@@ -5,7 +5,7 @@
 Project scan (default):
 
 ```bash
-node src/cli/scan-supply-chain-campaigns.mjs
+node --import tsx src/cli/scan-supply-chain-campaigns.ts
 ```
 
 This command also refreshes `generated/latest-scan.json`.
@@ -13,37 +13,37 @@ This command also refreshes `generated/latest-scan.json`.
 Machine-wide scan:
 
 ```bash
-node src/cli/scan-supply-chain-campaigns.mjs --machine-wide
+node --import tsx src/cli/scan-supply-chain-campaigns.ts --machine-wide
 ```
 
 Machine-wide scan with explicit worker count:
 
 ```bash
-node src/cli/scan-supply-chain-campaigns.mjs --machine-wide --workers 8
+node --import tsx src/cli/scan-supply-chain-campaigns.ts --machine-wide --workers 8
 ```
 
 Write blocklists:
 
 ```bash
-node src/cli/scan-supply-chain-campaigns.mjs --write-blocklists ./docs/security/blocklists
+node --import tsx src/cli/scan-supply-chain-campaigns.ts --write-blocklists ./docs/security/blocklists
 ```
 
 Apply the managed hosts section:
 
 ```bash
-node src/cli/scan-supply-chain-campaigns.mjs --apply-hosts
+node --import tsx src/cli/scan-supply-chain-campaigns.ts --apply-hosts
 ```
 
 Apply outbound firewall rules:
 
 ```bash
-node src/cli/scan-supply-chain-campaigns.mjs --apply-firewall
+node --import tsx src/cli/scan-supply-chain-campaigns.ts --apply-firewall
 ```
 
 Standalone PNPM governance scan (current project scope only):
 
 ```bash
-node src/cli/scan-pnpm-governance.mjs
+node --import tsx src/cli/scan-pnpm-governance.ts
 ```
 
 This command also refreshes `generated/latest-pnpm-governance-scan.json`.
@@ -53,15 +53,15 @@ Nested PNPM domains with their own `pnpm-workspace.yaml` are reported beneath th
 Standalone PNPM governance scan for one or more explicit roots:
 
 ```bash
-node src/cli/scan-pnpm-governance.mjs C:\git
-node src/cli/scan-pnpm-governance.mjs C:\git,C:\Projects
-node src/cli/scan-pnpm-governance.mjs C:\git C:\Projects
+node --import tsx src/cli/scan-pnpm-governance.ts C:\git
+node --import tsx src/cli/scan-pnpm-governance.ts C:\git,C:\Projects
+node --import tsx src/cli/scan-pnpm-governance.ts C:\git C:\Projects
 ```
 
 Complete machine-wide scan plus remediation:
 
 ```bash
-node src/cli/scan-supply-chain-campaigns.mjs --machine-wide --apply-hosts --apply-firewall
+node --import tsx src/cli/scan-supply-chain-campaigns.ts --machine-wide --apply-hosts --apply-firewall
 ```
 
 ## pnpm scripts

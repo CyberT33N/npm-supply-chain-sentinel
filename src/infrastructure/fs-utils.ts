@@ -2,9 +2,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
-import { LOCKFILE_NAMES, PACKAGE_JSON_NAME, TEXT_ENCODINGS } from '../domain/policy.mjs';
+import { LOCKFILE_NAMES, PACKAGE_JSON_NAME, TEXT_ENCODINGS } from '../domain/policy';
 
-export function readFileTextSafe(filePath) {
+export interface JsonReadResult {
+  rawText: string | null;
+  value: unknown | null;
+}
+
+export function readFileTextSafe(filePath: string): string {
   for (const encoding of TEXT_ENCODINGS) {
     try {
       return fs.readFileSync(filePath, encoding);
@@ -17,7 +22,7 @@ export function readFileTextSafe(filePath) {
   return '';
 }
 
-export function fileExists(filePath) {
+export function fileExists(filePath: string): boolean {
   try {
     fs.accessSync(filePath, fs.constants.F_OK);
     return true;
@@ -26,7 +31,7 @@ export function fileExists(filePath) {
   }
 }
 
-export function statSafe(filePath) {
+export function statSafe(filePath: string): fs.Stats | null {
   try {
     return fs.statSync(filePath);
   } catch {
@@ -34,7 +39,7 @@ export function statSafe(filePath) {
   }
 }
 
-export function readJsonSafe(filePath) {
+export function readJsonSafe(filePath: string): JsonReadResult {
   try {
     const text = readFileTextSafe(filePath);
     return {
@@ -49,7 +54,7 @@ export function readJsonSafe(filePath) {
   }
 }
 
-export function normalizeForDisplay(filePath) {
+export function normalizeForDisplay(filePath: string): string {
   const resolved = path.resolve(filePath);
   const cwd = path.resolve(process.cwd());
   if (resolved.startsWith(cwd + path.sep)) {
@@ -58,15 +63,15 @@ export function normalizeForDisplay(filePath) {
   return resolved;
 }
 
-export function normalizeSlashes(input) {
+export function normalizeSlashes(input: string): string {
   return input.split(path.sep).join('/');
 }
 
-export function escapeRegExp(value) {
+export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-export function direntIsDirectory(entry, fullPath) {
+export function direntIsDirectory(entry: fs.Dirent, fullPath: string): boolean {
   if (entry.isDirectory()) {
     return true;
   }
@@ -76,7 +81,7 @@ export function direntIsDirectory(entry, fullPath) {
   return Boolean(statSafe(fullPath)?.isDirectory());
 }
 
-export function direntIsFile(entry, fullPath) {
+export function direntIsFile(entry: fs.Dirent, fullPath: string): boolean {
   if (entry.isFile()) {
     return true;
   }
@@ -86,7 +91,7 @@ export function direntIsFile(entry, fullPath) {
   return Boolean(statSafe(fullPath)?.isFile());
 }
 
-export function detectProjectRoot(startDir) {
+export function detectProjectRoot(startDir: string): string {
   let current = path.resolve(startDir);
 
   while (true) {
@@ -108,14 +113,14 @@ export function detectProjectRoot(startDir) {
   }
 }
 
-export function detectLineEnding(text) {
+export function detectLineEnding(text: string): string {
   return text.includes('\r\n') ? '\r\n' : '\n';
 }
 
-export function platformMatches(platforms) {
+export function platformMatches(platforms?: readonly NodeJS.Platform[]): boolean {
   return !platforms || platforms.includes(process.platform);
 }
 
-export function toAbsolutePath(inputPath) {
+export function toAbsolutePath(inputPath: string): string {
   return path.resolve(process.cwd(), inputPath);
 }

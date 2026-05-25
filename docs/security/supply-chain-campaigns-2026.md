@@ -10,7 +10,7 @@ Der Fokus ist defensiv:
 - Unterschiede zwischen separaten Einzelvorfaellen und derselben Wurmfamilie,
 - praktische Konsequenzen fuer einen plattformuebergreifenden Node.js-Scanner.
 
-Die maschinenlesbare Datenbasis liegt in `src/data/supply-chain-campaigns-2026.mjs`.
+Die maschinenlesbare Datenbasis liegt in `src/data/supply-chain-campaigns-2026.ts`.
 
 ## Direktantworten
 Ja: Der Axios-Fall ist ueber normale Websuche sehr gut auffindbar.
@@ -278,7 +278,7 @@ Aus 12-Factor-Sicht bleibt das Tool dadurch klar:
 ### Node.js-Scanner
 Datei:
 
-- `src/cli/scan-supply-chain-campaigns.mjs`
+- `src/cli/scan-supply-chain-campaigns.ts`
 
 Der Scanner prueft:
 
@@ -296,7 +296,7 @@ Der Scanner prueft:
 ### Datenbasis
 Datei:
 
-- `src/data/supply-chain-campaigns-2026.mjs`
+- `src/data/supply-chain-campaigns-2026.ts`
 
 Diese Datei enthaelt:
 
@@ -310,7 +310,7 @@ Diese Datei enthaelt:
 Minimaler Repo-Scan:
 
 ```bash
-node src/cli/scan-supply-chain-campaigns.mjs
+node --import tsx src/cli/scan-supply-chain-campaigns.ts
 ```
 
 Der Default ist jetzt bewusst projektgebunden:
@@ -321,19 +321,19 @@ Der Default ist jetzt bewusst projektgebunden:
 Mehrere Roots scannen:
 
 ```bash
-node src/cli/scan-supply-chain-campaigns.mjs --root ../repo-a --root ../repo-b
+node --import tsx src/cli/scan-supply-chain-campaigns.ts --root ../repo-a --root ../repo-b
 ```
 
 Maschinenweiter Scan:
 
 ```bash
-node src/cli/scan-supply-chain-campaigns.mjs --machine-wide
+node --import tsx src/cli/scan-supply-chain-campaigns.ts --machine-wide
 ```
 
 Mit expliziter Worker-Zahl:
 
 ```bash
-node src/cli/scan-supply-chain-campaigns.mjs --machine-wide --workers 8
+node --import tsx src/cli/scan-supply-chain-campaigns.ts --machine-wide --workers 8
 ```
 
 Wichtig:
@@ -345,13 +345,13 @@ Wichtig:
 Blocklisten schreiben:
 
 ```bash
-node src/cli/scan-supply-chain-campaigns.mjs --write-blocklists ./docs/security/blocklists
+node --import tsx src/cli/scan-supply-chain-campaigns.ts --write-blocklists ./docs/security/blocklists
 ```
 
 Hosts-Datei aktualisieren:
 
 ```bash
-node src/cli/scan-supply-chain-campaigns.mjs --apply-hosts
+node --import tsx src/cli/scan-supply-chain-campaigns.ts --apply-hosts
 ```
 
 Hinweis:

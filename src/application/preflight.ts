@@ -4,12 +4,12 @@ import path from 'node:path';
 import {
   SCAN_CANDIDATE_BASENAMES,
   shouldSkipDirectory,
-} from '../domain/policy.mjs';
+} from '../domain/policy';
 import {
   direntIsDirectory,
   direntIsFile,
   normalizeForDisplay,
-} from '../infrastructure/fs-utils.mjs';
+} from '../infrastructure/fs-utils';
 
 export const PREFLIGHT_MODE_FAST = 'fast';
 export const PREFLIGHT_MODE_DEEP = 'deep';

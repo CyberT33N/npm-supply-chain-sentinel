@@ -2,27 +2,27 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { addFinding, createFindingsContainer, summarizeFindings } from '../domain/findings.mjs';
+import { addFinding, createFindingsContainer, summarizeFindings } from '../domain/findings';
 import {
   DEFAULT_WORKER_COUNT,
   SCAN_MODE_MACHINE,
   SCAN_MODE_PROJECT,
-} from '../domain/policy.mjs';
-import { detectProjectRoot, normalizeForDisplay, toAbsolutePath } from '../infrastructure/fs-utils.mjs';
+} from '../domain/policy';
+import { detectProjectRoot, normalizeForDisplay, toAbsolutePath } from '../infrastructure/fs-utils';
 import {
   applyFirewallRules,
   applyHostsFile,
   auditHostsFile,
   defaultHostsPath,
   writeBlocklists,
-} from '../infrastructure/remediation.mjs';
-import { ensureRipgrepInstalled } from '../infrastructure/ripgrep.mjs';
+} from '../infrastructure/remediation';
+import { ensureRipgrepInstalled } from '../infrastructure/ripgrep';
 import {
   LATEST_FULL_SCAN_REPORT_BASENAME,
   resolveGeneratedReportPath,
   writeJsonArtifacts,
-} from '../infrastructure/report-artifacts.mjs';
-import { renderSummary, toSerializableResult } from '../presentation/reporting.mjs';
+} from '../infrastructure/report-artifacts';
+import { renderSummary, toSerializableResult } from '../presentation/reporting';
 import {
   buildScanTasks,
   enumerateMachineRoots,
@@ -30,14 +30,14 @@ import {
   inspectHomeContentRules,
   inspectWindowsRegistry,
   runWorkerPool,
-} from './scanner.mjs';
-import { auditPnpmGovernance, inspectPnpmRuntime } from './pnpm-governance.mjs';
+} from './scanner';
+import { auditPnpmGovernance, inspectPnpmRuntime } from './pnpm-governance';
 import {
   PREFLIGHT_MODE_DEEP,
   PREFLIGHT_MODE_FAST,
   buildPreflightPlan,
   formatTaskPlanSummary,
-} from './preflight.mjs';
+} from './preflight';
 
 const SCRIPT_FILE_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = path.dirname(SCRIPT_FILE_PATH);
@@ -241,7 +241,7 @@ function printHelp() {
   console.log(`Supply-chain scanner (Axios + Shai-Hulud / Mini Shai-Hulud)
 
 Usage:
-  node src/cli/scan-supply-chain-campaigns.mjs [options]
+  node --import tsx src/cli/scan-supply-chain-campaigns.ts [options]
 
 Options:
   --root <path>              Override or add project roots. Repeatable.

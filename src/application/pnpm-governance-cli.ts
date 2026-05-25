@@ -2,16 +2,16 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { SCAN_MODE_MACHINE, SCAN_MODE_PROJECT } from '../domain/policy.mjs';
-import { detectProjectRoot, normalizeForDisplay, toAbsolutePath } from '../infrastructure/fs-utils.mjs';
+import { SCAN_MODE_MACHINE, SCAN_MODE_PROJECT } from '../domain/policy';
+import { detectProjectRoot, normalizeForDisplay, toAbsolutePath } from '../infrastructure/fs-utils';
 import {
   LATEST_PNPM_GOVERNANCE_REPORT_BASENAME,
   resolveGeneratedReportPath,
   writeJsonArtifacts,
-} from '../infrastructure/report-artifacts.mjs';
-import { renderPnpmGovernanceAudit, toSerializablePnpmGovernanceResult } from '../presentation/pnpm-governance-reporting.mjs';
-import { enumerateMachineRoots } from './scanner.mjs';
-import { auditPnpmGovernance, inspectPnpmRuntime } from './pnpm-governance.mjs';
+} from '../infrastructure/report-artifacts';
+import { renderPnpmGovernanceAudit, toSerializablePnpmGovernanceResult } from '../presentation/pnpm-governance-reporting';
+import { enumerateMachineRoots } from './scanner';
+import { auditPnpmGovernance, inspectPnpmRuntime } from './pnpm-governance';
 
 const SCRIPT_FILE_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = path.dirname(SCRIPT_FILE_PATH);
@@ -64,7 +64,7 @@ function printHelp() {
   console.log(`PNPM governance scanner
 
 Usage:
-  node src/cli/scan-pnpm-governance.mjs [options] [path[,path...]] ...
+  node --import tsx src/cli/scan-pnpm-governance.ts [options] [path[,path...]] ...
 
 Options:
   --root <path>              Add an explicit governance root. Repeatable.
@@ -85,11 +85,11 @@ Notes:
   - --machine-wide cannot be combined with explicit paths.
 
 Examples:
-  node src/cli/scan-pnpm-governance.mjs
-  node src/cli/scan-pnpm-governance.mjs C:\\git
-  node src/cli/scan-pnpm-governance.mjs C:\\git,C:\\Projects
-  node src/cli/scan-pnpm-governance.mjs C:\\git C:\\Projects
-  node src/cli/scan-pnpm-governance.mjs --root C:\\git --roots C:\\Projects,D:\\repos
+  node --import tsx src/cli/scan-pnpm-governance.ts
+  node --import tsx src/cli/scan-pnpm-governance.ts C:\\git
+  node --import tsx src/cli/scan-pnpm-governance.ts C:\\git,C:\\Projects
+  node --import tsx src/cli/scan-pnpm-governance.ts C:\\git C:\\Projects
+  node --import tsx src/cli/scan-pnpm-governance.ts --root C:\\git --roots C:\\Projects,D:\\repos
 `);
 }
 

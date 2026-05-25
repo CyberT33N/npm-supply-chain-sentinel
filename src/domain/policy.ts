@@ -1,10 +1,10 @@
 import os from 'node:os';
 
-import { dataset } from '../data/supply-chain-campaigns-2026.mjs';
+import { dataset } from '../data/supply-chain-campaigns-2026';
 
 export { dataset };
 
-export const TEXT_ENCODINGS = ['utf8', 'latin1'];
+export const TEXT_ENCODINGS = ['utf8', 'latin1'] as const satisfies readonly BufferEncoding[];
 export const PACKAGE_JSON_NAME = 'package.json';
 export const LOCKFILE_NAMES = new Set([
   'package-lock.json',
@@ -124,6 +124,8 @@ export const workflowSupportIndicators = new Set([
 ]);
 export const ripgrepLiteralPatterns = buildRipgrepLiteralPatterns();
 
+export type SupplyChainDataset = typeof dataset;
+
 function buildExactRuleCandidatesByName() {
   const map = new Map();
   for (const rule of dataset.exactPackageVersionRules) {
@@ -200,7 +202,11 @@ function buildRipgrepLiteralPatterns() {
   return [...patterns];
 }
 
-export function shouldSkipDirectory(dirName, mode, options = {}) {
+export function shouldSkipDirectory(
+  dirName: string,
+  mode: string,
+  options: { includeTrash?: boolean } = {},
+): boolean {
   if (ALWAYS_SKIPPED_DIR_NAMES.has(dirName)) {
     return true;
   }
@@ -213,7 +219,7 @@ export function shouldSkipDirectory(dirName, mode, options = {}) {
   return false;
 }
 
-export function buildManagedHostsEntries() {
+export function buildManagedHostsEntries(): Array<{ address: string; domain: string; line: string }> {
   const entries = [];
   for (const domain of dataset.networkIndicators.hostsBlocklistDomains) {
     entries.push({

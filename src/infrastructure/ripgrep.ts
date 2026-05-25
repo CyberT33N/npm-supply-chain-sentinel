@@ -1,9 +1,34 @@
 import path from 'node:path';
 
-import { RIPGREP_BINARY } from '../domain/policy.mjs';
-import { runCommand } from './process-utils.mjs';
+import { RIPGREP_BINARY } from '../domain/policy';
+import { runCommand } from './process-utils';
 
-export function ensureRipgrepInstalled() {
+export interface RipgrepLiteralScanOptions {
+  rootPath: string;
+  patterns: readonly string[];
+  includeGlobs?: readonly string[];
+  excludeGlobs?: readonly string[];
+  maxDepth?: number | null;
+  threads?: number;
+}
+
+interface RipgrepJsonSubmatch {
+  match?: {
+    text?: string;
+  };
+}
+
+interface RipgrepJsonRecord {
+  type?: string;
+  data?: {
+    path?: {
+      text?: string;
+    };
+    submatches?: RipgrepJsonSubmatch[];
+  };
+}
+
+export function ensureRipgrepInstalled(): string {
   const result = runCommand(RIPGREP_BINARY, ['--version']);
   if (result.error || result.status !== 0) {
     const detail =
@@ -17,7 +42,7 @@ export function ensureRipgrepInstalled() {
   return (result.stdout ?? '').split(/\r?\n/u)[0]?.trim() ?? 'rg';
 }
 
-export function runRipgrepLiteralScan(options) {
+export function runRipgrepLiteralScan(options: RipgrepLiteralScanOptions): Map<string, Set<string>> {
   const args = [
     '--json',
     '--fixed-strings',
@@ -57,9 +82,9 @@ export function runRipgrepLiteralScan(options) {
   const matchesByFile = new Map();
   const lines = (result.stdout ?? '').split(/\r?\n/u).filter(Boolean);
   for (const line of lines) {
-    let record;
+    let record: RipgrepJsonRecord;
     try {
-      record = JSON.parse(line);
+      record = JSON.parse(line) as RipgrepJsonRecord;
     } catch {
       continue;
     }

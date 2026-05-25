@@ -1,0 +1,55 @@
+/*
+ *███████████████████████████████████████████████████████████████████████████████
+ *██******************** PRESENTED BY t33n Software ***************************██
+ *██                                                                           ██
+ *██                  ████████╗██████╗ ██████╗ ███╗   ██╗                      ██
+ *██                  ╚══██╔══╝╚════██╗╚════██╗████╗  ██║                      ██
+ *██                     ██║    █████╔╝ █████╔╝██╔██╗ ██║                      ██
+ *██                     ██║    ╚═══██╗ ╚═══██╗██║╚██╗██║                      ██
+ *██                     ██║   ██████╔╝██████╔╝██║ ╚████║                      ██
+ *██                     ╚═╝   ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝                      ██
+ *██                                                                           ██
+ *███████████████████████████████████████████████████████████████████████████████
+ *███████████████████████████████████████████████████████████████████████████████
+ */
+ 
+{
+  /**
+   * $schema: Better IDE support (completion/validation).
+   */
+  "$schema": "https://json.schemastore.org/tsconfig",
+
+  /**
+   * Extends: Inherit from the node configuration.
+   */
+  "extends": "./tsconfig.node.json",
+
+  /**
+   * CompilerOptions: Test-specific overrides.
+   */
+  "compilerOptions": {
+    /**
+     * NoEmit: Type-checking only, no JavaScript output.
+     */
+    "noEmit": true,
+
+    /**
+     * Skip type checking of .d.ts from dependencies to reduce noise.
+     */
+    "skipLibCheck": true,
+    /**
+     * Types: Include Vitest globals for test environment.
+     */
+    "types": ["vitest/globals", "node"]
+  },
+
+  "exclude": [],
+  /**
+   * Include: Source files, test files, and test-only ambient types.
+   */
+  "include": [
+    "src/**/*.ts",
+    "test/types/**/*.test-d.ts",
+    "test/types/**/*.ts"
+  ]
+}

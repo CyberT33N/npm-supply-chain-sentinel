@@ -1,7 +1,7 @@
 import path from 'node:path';
 import process from 'node:process';
 
-import { stripInternalKeys, summarizeFindings } from '../domain/findings.mjs';
+import { stripInternalKeys, summarizeFindings } from '../domain/findings';
 import {
   ANSI_COLORS,
   STATUS_ERROR_SYMBOL,
@@ -9,9 +9,9 @@ import {
   STATUS_WARN_SYMBOL,
   buildManagedHostsEntries,
   dataset,
-} from '../domain/policy.mjs';
-import { normalizeForDisplay } from '../infrastructure/fs-utils.mjs';
-import { renderPnpmGovernanceAudit, serializeGovernanceAudit } from './pnpm-governance-reporting.mjs';
+} from '../domain/policy';
+import { normalizeForDisplay } from '../infrastructure/fs-utils';
+import { renderPnpmGovernanceAudit, serializeGovernanceAudit } from './pnpm-governance-reporting';
 
 export function colorize(text, colorName) {
   if (!process.stdout.isTTY) {
