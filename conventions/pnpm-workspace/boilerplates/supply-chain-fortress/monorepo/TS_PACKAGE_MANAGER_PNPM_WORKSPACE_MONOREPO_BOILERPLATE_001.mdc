@@ -364,6 +364,13 @@ saveWorkspaceProtocol: true
 # Example: `1.2.3` instead of `^1.2.3`.
 savePrefix: ""
 
+# `saveExact`
+# Simple: Saves newly added dependency versions as exact versions instead of ranges.
+# Details: This prevents caret or tilde ranges from being written during `pnpm add`
+# and keeps newly introduced dependencies pinned to an explicitly approved version.
+# Example: `pnpm add lodash@4.17.21` writes `4.17.21` instead of `^4.17.21`.
+saveExact: true
+
 # `injectWorkspacePackages`
 # Simple: Prevents hard workspace injection by default.
 # Details: Injected dependencies are only permitted in genuine peer graph special cases,
@@ -529,8 +536,9 @@ updateNotifier: false
 # `catalog`
 # Simple: Central catalog of approved version states.
 # Details: Even if the catalog is initially empty, the surface is already
-# established and will later become the approval point for versions.
-# Example: `react: "19.1.0"` would be a catalog entry approved later.
+# established and will later become the approval point for versions. Every
+# catalog value must be an exact version such as `19.1.0`, not `^19.1.0` or `~19.1.0`.
+# Example: `react: 19.1.0` would be a catalog entry approved later.
 catalog: {}
 
 # `catalogMode`
@@ -553,7 +561,7 @@ cleanupUnusedCatalogs: true
 # Simple: Replaces per-subproject `.npmrc` for package-specific deviations.
 # Details: The array remains empty until there is a genuinely necessary and reviewed
 # special rule per package.
-# Example: A legacy package could target `savePrefix: "~"` later.
+# Example: A legacy package could receive a targeted registry or peer-policy exception later.
 packageConfigs: []
 
 ########################################

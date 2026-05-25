@@ -514,6 +514,7 @@ function auditWorkspaceFile(checks, classification, workspaceDocument) {
     auditObjectSurface(checks, workspace, PNPM_WORKSPACE_BASENAME, property);
   }
   auditAllowBuildsSurface(checks, workspace);
+  auditCatalogExactVersions(checks, workspace);
 
   for (const property of SECURITY_EXCEPTION_WORKSPACE_RULES) {
     const actual = getNestedValue(workspace, property);
@@ -1526,6 +1527,41 @@ function auditAllowBuildsSurface(checks, workspace) {
   });
 }
 
+function auditCatalogExactVersions(checks, workspace) {
+  const catalog = getNestedValue(workspace, 'catalog');
+  if (!isPlainObject(catalog)) {
+    return;
+  }
+
+  const entries = Object.entries(catalog).sort(([leftName], [rightName]) => leftName.localeCompare(rightName));
+  const invalidEntries = entries.filter(([, specifier]) => !isCanonicalExactSemverString(specifier));
+
+  if (invalidEntries.length > 0) {
+    for (const [packageName, specifier] of invalidEntries) {
+      pushCheck(checks, {
+        file: PNPM_WORKSPACE_BASENAME,
+        property: `catalog.${packageName}`,
+        status: 'invalid',
+        expected: 'exact semver like 1.2.3',
+        actual: formatValue(specifier),
+        message: 'Catalog entries must use explicit exact versions without ranges such as ^ or ~.',
+      });
+    }
+    return;
+  }
+
+  pushCheck(checks, {
+    file: PNPM_WORKSPACE_BASENAME,
+    property: 'catalog exact versions',
+    status: 'ok',
+    expected: 'exact semver only',
+    actual: entries.length === 1 ? '1 exact entry' : `${entries.length} exact entries`,
+    message: entries.length === 0
+      ? 'catalog is present as an empty approval map. Future entries must use explicit exact semver versions.'
+      : 'catalog entries use explicit exact semver versions only.',
+  });
+}
+
 function pushEqualityCheck(checks, object, fileName, property, expected, displayProperty = property) {
   const actual = getNestedValue(object, property);
   if (actual === undefined) {
@@ -1655,6 +1691,14 @@ function getNestedValue(target, propertyPath) {
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isCanonicalExactSemverString(value) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 && semver.valid(trimmed) === trimmed;
 }
 
 function formatValue(value) {

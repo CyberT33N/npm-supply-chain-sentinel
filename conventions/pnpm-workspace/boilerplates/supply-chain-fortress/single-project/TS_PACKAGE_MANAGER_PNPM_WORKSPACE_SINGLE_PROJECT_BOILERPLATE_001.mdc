@@ -423,6 +423,13 @@ ignoreCompatibilityDb: true
 # Example: Contributors do not receive spontaneous pnpm upgrade notifications in daily work.
 updateNotifier: false
 
+# `saveExact`
+# Simple: Saves newly added dependency versions as exact versions instead of ranges.
+# Details: This prevents caret or tilde ranges from being written during `pnpm add`
+# and keeps newly introduced dependencies pinned to an explicitly approved version.
+# Example: `pnpm add lodash@4.17.21` writes `4.17.21` instead of `^4.17.21`.
+saveExact: true
+
 ########################################
 # Central version approval
 ########################################
@@ -430,8 +437,9 @@ updateNotifier: false
 # `catalog`
 # Simple: Central catalog of approved version states, even for single-project repos.
 # Details: Even in a single-package repo, an explicit approval point for
-# versions is more secure than ad-hoc direct ranges.
-# Example: `typescript: "5.9.0"` would be a catalog entry approved later.
+# versions is more secure than ad-hoc direct ranges, and every catalog value
+# must be an exact version such as `5.9.0`, not `^5.9.0` or `~5.9.0`.
+# Example: `typescript: 5.9.0` would be a catalog entry approved later.
 catalog: {}
 
 # `catalogMode`

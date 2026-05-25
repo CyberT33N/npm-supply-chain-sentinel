@@ -21,7 +21,7 @@ The convention document defines the canonical policy.
 - applies managed-project discovery rules before a candidate is allowed into governance reporting
 - classifies accepted PNPM roots as `pnpm-single-project` or `pnpm-monorepo`
 - validates `pnpm-workspace.yaml`, root `package.json`, lockfile presence, and project-local auth files
-- checks PNPM 11 pinning, Node.js runtime alignment, build governance, trust policy, lockfile discipline, and workspace protocol usage
+- checks PNPM 11 pinning, Node.js runtime alignment, build governance, trust policy, lockfile discipline, `saveExact: true`, exact catalog versions, and workspace protocol usage
 - can run as a standalone CLI that audits only PNPM governance without running IOC, malware, persistence, hosts, or firewall flows first
 
 ## Standalone execution

@@ -47,6 +47,7 @@ packageExtensions: {}
 allowedDeprecatedVersions: {}
 ignoreCompatibilityDb: true
 updateNotifier: false
+saveExact: true
 
 catalog:
   minimatch: 10.2.5

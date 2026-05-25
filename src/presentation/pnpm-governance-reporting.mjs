@@ -59,8 +59,12 @@ export function renderPnpmGovernanceAudit(governanceAudit) {
       const memberSuffix = project.workspaceMembers.length > 0
         ? ` workspace_members=${project.workspaceMembers.length}`
         : '';
+      const governanceHighlights = summarizePassHighlights(project);
+      const highlightSuffix = governanceHighlights.length > 0
+        ? ` ${governanceHighlights.join(' ')}`
+        : '';
       console.log(
-        `  ${colorize('Fortress governance check passed.', 'green')} checks_ok=${project.summary.okCount}${memberSuffix}`,
+        `  ${colorize('Fortress governance check passed.', 'green')} checks_ok=${project.summary.okCount}${memberSuffix}${highlightSuffix}`,
       );
       continue;
     }
@@ -163,4 +167,19 @@ function statusPresentation(status) {
     colorName: 'yellow',
     label: 'warning',
   };
+}
+
+function summarizePassHighlights(project) {
+  const highlights = [];
+  if (hasOkCheck(project, 'saveExact')) {
+    highlights.push('save_exact=true');
+  }
+  if (hasOkCheck(project, 'catalog exact versions')) {
+    highlights.push('catalog_versions=explicit');
+  }
+  return highlights;
+}
+
+function hasOkCheck(project, property) {
+  return project.checks.some((check) => check.status === 'ok' && check.property === property);
 }
