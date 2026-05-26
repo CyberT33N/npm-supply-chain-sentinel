@@ -209,6 +209,52 @@ describe('pnpm governance rule matrix', () => {
     },
   );
 
+  it.each([
+    {
+      property: 'trustPolicyExclude',
+      value: ['legacy-mirror'],
+      expectedRecoveryHint: /trust-policy or registry governance/i,
+      expectedTargetState: '[]',
+    },
+    {
+      property: 'overrides',
+      value: { minimatch: '10.2.5' },
+      expectedRecoveryHint: /canonical catalog or dependency policy changes/i,
+      expectedTargetState: '{}',
+    },
+    {
+      property: 'packageExtensions',
+      value: {
+        'minimatch@10.2.5': {
+          peerDependencies: {
+            semver: '7.8.0',
+          },
+        },
+      },
+      expectedRecoveryHint: /upstream manifest fixes or canonical package policy changes/i,
+      expectedTargetState: '{}',
+    },
+  ])(
+    'keeps $property as a failing yellow exception surface',
+    async ({ property, value, expectedRecoveryHint, expectedTargetState }) => {
+      const rootPath = await createFixtureProject({
+        workspaceText: mutateWorkspaceText(BASE_WORKSPACE_TEXT, (workspace) => {
+          setNestedValue(workspace, property, value);
+        }),
+      });
+
+      const project = runAudit(rootPath);
+      const exceptionCheck = getCheck(project, property);
+
+      expect(project.status).toBe('failed');
+      expect(exceptionCheck?.status).toBe('invalid');
+      expect(exceptionCheck?.presentationTone).toBe('warning');
+      expect(exceptionCheck?.message ?? '').toMatch(/still fails governance/i);
+      expect(exceptionCheck?.message ?? '').toContain(expectedTargetState);
+      expect(exceptionCheck?.message ?? '').toMatch(expectedRecoveryHint);
+    },
+  );
+
   it('marks all single-project forbidden monorepo-only surfaces as omitted', async () => {
     const project = runAudit(await createFixtureProject({
       workspaceText: BASE_WORKSPACE_TEXT,
@@ -465,5 +511,6 @@ describe('pnpm governance rule matrix', () => {
     expect(registryCheck?.status).toBe('missing');
     expect(registryCheck?.message ?? '').toMatch(/Nexus/i);
     expect(registryCheck?.message ?? '').toMatch(/official npm registry/i);
+    expect(registryCheck?.message ?? '').toContain('https://registry.npmjs.org/');
   });
 });

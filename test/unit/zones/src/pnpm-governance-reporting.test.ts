@@ -7,6 +7,7 @@ import {
   ANSI_COLORS,
   STATUS_ERROR_SYMBOL,
   STATUS_OK_SYMBOL,
+  STATUS_WARN_SYMBOL,
 } from '../../../../src/domain/policy';
 import { renderPnpmGovernanceAudit } from '../../../../src/presentation/pnpm-governance-reporting';
 import {
@@ -114,6 +115,32 @@ describe('renderPnpmGovernanceAudit', () => {
     );
     expect(output).toContain(
       `    ${ANSI_COLORS.red}${STATUS_ERROR_SYMBOL}${ANSI_COLORS.reset} ${ANSI_COLORS.red}saveExact:`,
+    );
+  });
+
+  it('renders failing fortress exception surfaces in yellow while the audit remains in the failed red area', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: BASE_WORKSPACE_TEXT.replace(
+        /^trustPolicyExclude: \[\]$/mu,
+        'trustPolicyExclude:\n  - legacy-mirror',
+      ),
+    });
+
+    const audit = auditPnpmGovernance([rootPath], {}, PNPM_RUNTIME);
+    const [project] = audit.projects;
+    if (!project) {
+      throw new Error('Expected an audited project to be present.');
+    }
+
+    expect(project.status).toBe('failed');
+
+    const output = withStdoutTty(true, () => captureConsoleOutput(() => {
+      renderPnpmGovernanceAudit(audit);
+    }));
+
+    expect(output).toContain(`  ${ANSI_COLORS.red}Failed checks:${ANSI_COLORS.reset}`);
+    expect(output).toContain(
+      `    ${ANSI_COLORS.yellow}${STATUS_WARN_SYMBOL}${ANSI_COLORS.reset} ${ANSI_COLORS.yellow}trustPolicyExclude:`,
     );
   });
 

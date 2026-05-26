@@ -12,6 +12,7 @@ import {
   MANIFEST_DEPENDENCY_SECTIONS,
   MONOREPO_WORKSPACE_ARRAY_RULES,
   MONOREPO_WORKSPACE_EXACT_RULES,
+  OFFICIAL_NPM_REGISTRY_URL,
   PNPM_LOCKFILE_BASENAME,
   PNPM_RECOMMENDED_SECURITY_PROPERTIES,
   PNPM_WORKSPACE_BASENAME,
@@ -26,6 +27,7 @@ import {
   SINGLE_PROJECT_FORBIDDEN_WORKSPACE_RULES,
   classifyGovernanceUnmanagedPath,
   isAllowedProjectNpmrcKey,
+  isFortressExceptionSurfaceRule,
   isForbiddenProjectTokenHelperKey,
   isGovernanceDiscoveryExcludedDirName,
 } from '../domain/pnpm-governance';
@@ -52,6 +54,7 @@ type GovernanceDiscoveryReason =
   | typeof GOVERNANCE_DISCOVERY_REASON_UNMANAGED_PATH
   | typeof GOVERNANCE_DISCOVERY_REASON_MISSING_OWNERSHIP;
 type GovernanceCheckStatus = 'ok' | 'warning' | 'missing' | 'invalid';
+export type GovernanceCheckPresentationTone = 'default' | 'warning';
 type GovernanceProjectKind = 'node-project' | 'unknown' | 'pnpm-monorepo' | 'pnpm-single-project';
 type GovernanceRepoMode = 'single-project' | 'monorepo';
 type GovernanceProjectStatus = 'passed' | 'failed' | 'warning';
@@ -139,6 +142,7 @@ export interface GovernanceCheck {
   file: string;
   property: string;
   status: GovernanceCheckStatus;
+  presentationTone: GovernanceCheckPresentationTone;
   expected: string | null;
   actual: string | null;
   message: string;
@@ -148,6 +152,7 @@ interface GovernanceCheckInput {
   file: string;
   property: string;
   status: GovernanceCheckStatus;
+  presentationTone?: GovernanceCheckPresentationTone;
   expected?: string | null;
   actual?: string | null;
   message: string;
@@ -1812,7 +1817,7 @@ function auditHttpsRegistry(
       status: 'missing',
       expected: 'HTTPS registry URL',
       actual: formatValue(actual),
-      message: `${property} must point to an approved HTTPS registry. Prefer a reviewed internal registry such as Nexus; if none exists, use the official npm registry over HTTPS.`,
+      message: `${property} must point to an approved HTTPS registry. Prefer a reviewed internal Nexus registry; if none exists, use the official npm registry ${OFFICIAL_NPM_REGISTRY_URL}.`,
     });
     return;
   }
@@ -1830,7 +1835,7 @@ function auditHttpsRegistry(
       status: 'invalid',
       expected: 'HTTPS registry URL',
       actual,
-      message: `${property} must use https.`,
+      message: `${property} must use https. Approved defaults are a reviewed internal Nexus registry or the official npm registry ${OFFICIAL_NPM_REGISTRY_URL}.`,
     });
     return;
   }
@@ -1869,9 +1874,12 @@ function auditEmptyArray(
       file: fileName,
       property,
       status: 'invalid',
+      ...(isFortressExceptionSurfaceRule(property) ? { presentationTone: 'warning' as const } : {}),
       expected: '[]',
       actual: formatValue(actual),
-      message: `${property} must stay empty in Fortress mode.`,
+      message: isFortressExceptionSurfaceRule(property)
+        ? getFortressExceptionSurfaceViolationMessage(property, '[]')
+        : `${property} must stay empty in Fortress mode.`,
     });
     return;
   }
@@ -1980,9 +1988,12 @@ function auditEmptyObject(
       file: fileName,
       property,
       status: 'invalid',
+      ...(isFortressExceptionSurfaceRule(property) ? { presentationTone: 'warning' as const } : {}),
       expected: '{}',
       actual: formatValue(actual),
-      message: `${property} must stay empty in Fortress mode.`,
+      message: isFortressExceptionSurfaceRule(property)
+        ? getFortressExceptionSurfaceViolationMessage(property, '{}')
+        : `${property} must stay empty in Fortress mode.`,
     });
     return;
   }
@@ -2304,6 +2315,7 @@ function pushCheck(checks: GovernanceCheck[], check: GovernanceCheckInput): void
     file: check.file,
     property: check.property,
     status: check.status,
+    presentationTone: check.presentationTone ?? 'default',
     expected: check.expected ?? null,
     actual: check.actual ?? null,
     message: check.message,
@@ -2331,6 +2343,22 @@ function isCanonicalExactSemverString(value: unknown): boolean {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 && semver.valid(trimmed) === trimmed;
+}
+
+function getFortressExceptionSurfaceViolationMessage(
+  property: string,
+  emptyState: '[]' | '{}',
+): string {
+  switch (property) {
+    case 'trustPolicyExclude':
+      return 'trustPolicyExclude must stay empty in Fortress mode. This still fails governance. The yellow presentation only marks a temporary architectural exception surface; in a strict Supply Chain Fortress architecture the target end-state is [] again. Replace the exclusions with stronger trust-policy or registry governance and drive trustPolicyExclude back to [].';
+    case 'overrides':
+      return 'overrides must stay empty in Fortress mode. This still fails governance. The yellow presentation only marks a temporary architectural exception surface; in a strict Supply Chain Fortress architecture the target end-state is {} again. Replace overrides with canonical catalog or dependency policy changes and drive overrides back to {}.';
+    case 'packageExtensions':
+      return 'packageExtensions must stay empty in Fortress mode. This still fails governance. The yellow presentation only marks a temporary architectural exception surface; in a strict Supply Chain Fortress architecture the target end-state is {} again. Replace packageExtensions with upstream manifest fixes or canonical package policy changes and drive packageExtensions back to {}.';
+    default:
+      return `${property} must stay empty in Fortress mode. This still fails governance. The yellow presentation only marks a temporary architectural exception surface; in a strict Supply Chain Fortress architecture the target end-state is ${emptyState} again. Replace the configured values with stronger canonical controls and drive ${property} back to ${emptyState}.`;
+  }
 }
 
 function formatValue(value: unknown): string {

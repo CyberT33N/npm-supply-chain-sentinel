@@ -7,6 +7,7 @@ export const CURRENT_NODE_LTS = Object.freeze({
 
 export const REQUIRED_PNPM_MAJOR = 11;
 export const REQUIRED_PNPM_VERSION = '11.2.2';
+export const OFFICIAL_NPM_REGISTRY_URL = 'https://registry.npmjs.org/';
 export const PNPM_WORKSPACE_BASENAME = 'pnpm-workspace.yaml';
 export const PNPM_LOCKFILE_BASENAME = 'pnpm-lock.yaml';
 export const PROJECT_AUTH_FILE_BASENAMES = new Set(['.npmrc', 'auth.ini']);
@@ -107,6 +108,12 @@ export const SHARED_WORKSPACE_EMPTY_OBJECT_RULES = Object.freeze([
   'overrides',
   'packageExtensions',
   'allowedDeprecatedVersions',
+]);
+
+export const FORTRESS_EXCEPTION_SURFACE_RULES = Object.freeze([
+  'trustPolicyExclude',
+  'overrides',
+  'packageExtensions',
 ]);
 
 export const SHARED_WORKSPACE_OBJECT_RULES = Object.freeze([
@@ -356,6 +363,10 @@ export function isAllowedProjectNpmrcKey(rawKey: string): boolean {
     return false;
   }
   return ALLOWED_PROJECT_NPMRC_REGISTRY_KEY_SUFFIXES.has(registrySuffix);
+}
+
+export function isFortressExceptionSurfaceRule(property: string): boolean {
+  return FORTRESS_EXCEPTION_SURFACE_RULES.includes(String(property));
 }
 
 export function isForbiddenProjectTokenHelperKey(rawKey: string): boolean {

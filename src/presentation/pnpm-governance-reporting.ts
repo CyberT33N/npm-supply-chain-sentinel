@@ -219,11 +219,34 @@ function renderCheckSection(
 ): void {
   console.log(`  ${colorize(title, colorName)}`);
   for (const check of checks) {
+    const presentation = checkPresentation(check, colorName, symbol);
     const expectation = check.expected ? ` | expected=${check.expected}` : '';
     const actual = check.actual ? ` | actual=${check.actual}` : '';
     const details = `${check.property}: ${check.message}${expectation}${actual}`;
-    console.log(`    ${colorize(symbol, colorName)} ${colorize(details, colorName)}`);
+    console.log(
+      `    ${colorize(presentation.symbol, presentation.colorName)} ${colorize(details, presentation.colorName)}`,
+    );
   }
+}
+
+function checkPresentation(
+  check: GovernanceCheck,
+  fallbackColorName: 'green' | 'red',
+  fallbackSymbol: string,
+): {
+  colorName: keyof typeof ANSI_COLORS;
+  symbol: string;
+} {
+  if (check.presentationTone === 'warning') {
+    return {
+      colorName: 'yellow',
+      symbol: STATUS_WARN_SYMBOL,
+    };
+  }
+  return {
+    colorName: fallbackColorName,
+    symbol: fallbackSymbol,
+  };
 }
 
 function summarizePassHighlights(project: GovernanceProjectReport): string[] {
