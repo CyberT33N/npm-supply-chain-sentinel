@@ -86,6 +86,9 @@ describe('renderPnpmGovernanceAudit', () => {
     expect(failedLines.every((line) => line.startsWith(`    ${STATUS_ERROR_SYMBOL} `))).toBe(true);
     expect(renderedSuccessfulProperties).toEqual(successfulProperties);
     expect(renderedFailedProperties).toEqual(failedProperties);
+    expect(output).toContain(
+      'dependencies.minimatch: minimatch was scanned and resolves through the shared catalog. | expected=catalog: reference | actual=catalog:',
+    );
   });
 
   it('colors successful sections green and failed sections red on TTY output', async () => {
@@ -105,6 +108,25 @@ describe('renderPnpmGovernanceAudit', () => {
     );
     expect(output).toContain(
       `    ${ANSI_COLORS.red}${STATUS_ERROR_SYMBOL}${ANSI_COLORS.reset} ${ANSI_COLORS.red}saveExact:`,
+    );
+  });
+
+  it('reports named catalog sections with exact versions in the successful green area', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: BASE_WORKSPACE_TEXT.replace(
+        /^catalogMode: strict$/mu,
+        'catalogs:\n  ui:\n    react: 19.2.0\n    vite: 8.0.13\ncatalogMode: strict',
+      ),
+    });
+
+    const audit = auditPnpmGovernance([rootPath], {}, PNPM_RUNTIME);
+    const output = captureConsoleOutput(() => {
+      renderPnpmGovernanceAudit(audit);
+    });
+
+    expect(output).toContain('  Successful checks:');
+    expect(output).toContain(
+      'catalogs.ui exact versions: catalogs.ui entries are present and pinned to explicit exact semver versions only. | expected=exact semver only | actual=2 exact entries',
     );
   });
 });

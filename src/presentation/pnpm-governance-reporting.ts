@@ -231,7 +231,7 @@ function summarizePassHighlights(project: GovernanceProjectReport): string[] {
   if (hasOkCheck(project, 'saveExact')) {
     highlights.push('save_exact=true');
   }
-  if (hasOkCheck(project, 'catalog exact versions')) {
+  if (hasAnyCatalogExactVersionCheck(project)) {
     highlights.push('catalog_versions=explicit');
   }
   return highlights;
@@ -239,6 +239,16 @@ function summarizePassHighlights(project: GovernanceProjectReport): string[] {
 
 function hasOkCheck(project: GovernanceProjectReport, property: string): boolean {
   return project.checks.some((check) => check.status === 'ok' && check.property === property);
+}
+
+function hasAnyCatalogExactVersionCheck(project: GovernanceProjectReport): boolean {
+  return project.checks.some((check) =>
+    check.status === 'ok'
+    && (
+      check.property === 'catalog exact versions'
+      || (check.property.startsWith('catalogs.') && check.property.endsWith(' exact versions'))
+    ),
+  );
 }
 
 function formatProjectHeading(project: GovernanceProjectReport): string {

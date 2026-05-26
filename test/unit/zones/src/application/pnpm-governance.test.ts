@@ -24,6 +24,48 @@ describe('auditPnpmGovernance', () => {
     expect(project.classification.kind).toBe('pnpm-single-project');
     expect(getCheck(project, 'saveExact')?.status).toBe('ok');
     expect(getCheck(project, 'catalog exact versions')?.status).toBe('ok');
+    expect(getCheck(project, 'dependencies.minimatch')?.status).toBe('ok');
+    expect(getCheck(project, 'dependencies.minimatch')?.actual).toBe('catalog:');
+    expect(getCheck(project, 'devDependencies.vitest')?.status).toBe('ok');
+    expect(getCheck(project, 'devDependencies.vitest')?.actual).toBe('catalog:');
+  });
+
+  it('rejects hardcoded dependency versions that are not migrated to the catalog', async () => {
+    const rootPath = await createFixtureProject({
+      packageJson: createPackageJson({
+        dependencies: {
+          minimatch: '10.2.5',
+        },
+      }),
+      workspaceText: BASE_WORKSPACE_TEXT,
+    });
+
+    const project = runAudit(rootPath);
+    const dependencyCheck = getCheck(project, 'dependencies.minimatch');
+
+    expect(dependencyCheck?.status).toBe('invalid');
+    expect(dependencyCheck?.actual).toBe('10.2.5');
+    expect(dependencyCheck?.message ?? '').toMatch(/catalog/i);
+    expect(dependencyCheck?.message ?? '').toMatch(/exact approved version/i);
+  });
+
+  it('rejects hardcoded devDependency versions that are not migrated to the catalog', async () => {
+    const rootPath = await createFixtureProject({
+      packageJson: createPackageJson({
+        devDependencies: {
+          vitest: '4.1.6',
+        },
+      }),
+      workspaceText: BASE_WORKSPACE_TEXT,
+    });
+
+    const project = runAudit(rootPath);
+    const dependencyCheck = getCheck(project, 'devDependencies.vitest');
+
+    expect(dependencyCheck?.status).toBe('invalid');
+    expect(dependencyCheck?.actual).toBe('4.1.6');
+    expect(dependencyCheck?.message ?? '').toMatch(/catalog/i);
+    expect(dependencyCheck?.message ?? '').toMatch(/exact approved version/i);
   });
 
   it('flags a missing saveExact policy for a single-project repository', async () => {
@@ -153,7 +195,69 @@ describe('auditPnpmGovernance', () => {
     const rangeCheck = getCheck(project, 'catalog.range-only-fixture');
 
     expect(rangeCheck?.status).toBe('invalid');
-    expect(rangeCheck?.message ?? '').toMatch(/explicit exact versions/i);
+    expect(rangeCheck?.message ?? '').toMatch(/explicit exact semver version only/i);
+    expect(rangeCheck?.message ?? '').toMatch(/supply-chain/i);
     expect(getCheck(project, 'catalog exact versions')).toBeUndefined();
+  });
+
+  it('accepts named catalog sections when all entries use exact versions', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: BASE_WORKSPACE_TEXT.replace(
+        /^catalogMode: strict$/mu,
+        'catalogs:\n  ui:\n    react: 19.2.0\n    vite: 8.0.13\ncatalogMode: strict',
+      ),
+    });
+
+    const project = runAudit(rootPath);
+    const exactVersionsCheck = getCheck(project, 'catalogs.ui exact versions');
+
+    expect(exactVersionsCheck?.status).toBe('ok');
+    expect(exactVersionsCheck?.actual).toBe('2 exact entries');
+    expect(exactVersionsCheck?.message ?? '').toMatch(/pinned to explicit exact semver versions only/i);
+  });
+
+  it('rejects named catalog sections that use ranges instead of exact versions', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: BASE_WORKSPACE_TEXT.replace(
+        /^catalogMode: strict$/mu,
+        'catalogs:\n  ui:\n    react: ^19.2.0\ncatalogMode: strict',
+      ),
+    });
+
+    const project = runAudit(rootPath);
+    const rangeCheck = getCheck(project, 'catalogs.ui.react');
+
+    expect(rangeCheck?.status).toBe('invalid');
+    expect(rangeCheck?.actual).toBe('^19.2.0');
+    expect(rangeCheck?.message ?? '').toMatch(/supply-chain/i);
+    expect(rangeCheck?.message ?? '').toMatch(/\^ or ~/i);
+    expect(getCheck(project, 'catalogs.ui exact versions')).toBeUndefined();
+  });
+
+  it('audits workspace member package dependencies against the shared catalog', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: buildMonorepoWorkspaceText(BASE_WORKSPACE_TEXT),
+      workspaceMembers: [
+        {
+          relativePath: path.join('packages', 'fixture-app'),
+          packageJson: createPackageJson({
+            name: '@fixture/fixture-app',
+            dependencies: {
+              minimatch: '10.2.5',
+            },
+          }),
+        },
+      ],
+    });
+
+    const project = runAudit(rootPath);
+    const memberCheck = project.checks.find((check) =>
+      check.property === 'dependencies.minimatch'
+      && check.file.endsWith(path.join('packages', 'fixture-app', 'package.json')),
+    );
+
+    expect(memberCheck?.status).toBe('invalid');
+    expect(memberCheck?.actual).toBe('10.2.5');
+    expect(memberCheck?.message ?? '').toMatch(/catalog/i);
   });
 });

@@ -8,6 +8,7 @@ import YAML from 'yaml';
 import {
   CURRENT_NODE_LTS,
   GOVERNANCE_OWNER_SENTINEL_BASENAMES,
+  MANIFEST_CATALOG_DEPENDENCY_SECTIONS,
   MANIFEST_DEPENDENCY_SECTIONS,
   MONOREPO_WORKSPACE_ARRAY_RULES,
   MONOREPO_WORKSPACE_EXACT_RULES,
@@ -694,17 +695,20 @@ function auditProjectRoot(
   const classification = classifyProject(rootPath, packageJson.value, workspaceDocument, pnpmLockfilePath);
 
   if (classification.isPnpmProject) {
-    auditPnpmRuntime(checks, pnpmRuntime);
-    auditWorkspaceFile(checks, classification, workspaceDocument);
-    auditRootPackageJson(checks, packageJson, classification);
-    auditLockfile(checks, pnpmLockfilePath);
-    auditProjectAuthFiles(checks, gitignorePath, [npmrcPath, authIniPath]);
-
     if (classification.kind === 'pnpm-monorepo' && workspaceDocument.value) {
       const workspaceConfig = toWorkspaceConfig(workspaceDocument.value);
       const members = discoverWorkspaceMembers(rootPath, workspaceConfig?.packages);
       workspaceMembers.push(...members);
-      auditWorkspaceMembers(checks, rootPath, members, packageJson.value);
+    }
+
+    auditPnpmRuntime(checks, pnpmRuntime);
+    auditWorkspaceFile(checks, classification, workspaceDocument);
+    auditRootPackageJson(checks, packageJson, classification, rootPath, workspaceMembers);
+    auditLockfile(checks, pnpmLockfilePath);
+    auditProjectAuthFiles(checks, gitignorePath, [npmrcPath, authIniPath]);
+
+    if (classification.kind === 'pnpm-monorepo' && workspaceDocument.value) {
+      auditWorkspaceMembers(checks, workspaceMembers);
     }
   } else {
     pushCheck(checks, {
@@ -931,6 +935,8 @@ function auditRootPackageJson(
   checks: GovernanceCheck[],
   packageJson: JsonReadResult,
   classification: GovernanceProjectClassification,
+  rootPath: string,
+  workspaceMembers: readonly GovernanceWorkspaceMember[],
 ): void {
   if (!packageJson.rawText) {
     pushCheck(checks, {
@@ -954,6 +960,9 @@ function auditRootPackageJson(
   auditEnginesNode(checks, manifest);
   auditDevRuntime(checks, manifest);
   auditDevPackageManager(checks, manifest);
+  const workspaceNameToRoot = buildWorkspaceNameToRootMap(workspaceMembers);
+  auditWorkspaceProtocolUsage(checks, manifest, rootPath, workspaceNameToRoot);
+  auditCatalogDependencyUsage(checks, manifest, rootPath, workspaceNameToRoot);
 
   if (manifest.pnpm !== undefined) {
     pushCheck(checks, {
@@ -1310,9 +1319,7 @@ function auditProjectAuthFiles(
 
 function auditWorkspaceMembers(
   checks: GovernanceCheck[],
-  rootPath: string,
   members: readonly GovernanceWorkspaceMember[],
-  rootPackageJson: unknown,
 ): void {
   if (members.length === 0) {
     pushCheck(checks, {
@@ -1324,13 +1331,7 @@ function auditWorkspaceMembers(
     return;
   }
 
-  const workspaceNameToRoot = new Map<string, string>();
-  for (const member of members) {
-    const manifest = toManifest(member.packageJson.value);
-    if (typeof manifest?.name === 'string') {
-      workspaceNameToRoot.set(manifest.name, member.rootPath);
-    }
-  }
+  const workspaceNameToRoot = buildWorkspaceNameToRootMap(members);
 
   for (const member of members) {
     if (!member.packageJson.rawText || !toManifest(member.packageJson.value)) {
@@ -1356,10 +1357,7 @@ function auditWorkspaceMembers(
     }
 
     auditWorkspaceProtocolUsage(checks, toManifest(member.packageJson.value) ?? {}, member.rootPath, workspaceNameToRoot);
-  }
-
-  if (toManifest(rootPackageJson)) {
-    auditWorkspaceProtocolUsage(checks, toManifest(rootPackageJson) ?? {}, rootPath, workspaceNameToRoot);
+    auditCatalogDependencyUsage(checks, toManifest(member.packageJson.value) ?? {}, member.rootPath, workspaceNameToRoot);
   }
 }
 
@@ -1401,6 +1399,60 @@ function auditWorkspaceProtocolUsage(
         expected: 'workspace: protocol',
         actual: formatValue(specifier),
         message: `${dependencyName} is a local workspace package and must be referenced via the workspace: protocol.`,
+      });
+    }
+  }
+}
+
+function buildWorkspaceNameToRootMap(
+  members: readonly GovernanceWorkspaceMember[],
+): ReadonlyMap<string, string> {
+  const workspaceNameToRoot = new Map<string, string>();
+  for (const member of members) {
+    const manifest = toManifest(member.packageJson.value);
+    if (typeof manifest?.name === 'string') {
+      workspaceNameToRoot.set(manifest.name, member.rootPath);
+    }
+  }
+  return workspaceNameToRoot;
+}
+
+function auditCatalogDependencyUsage(
+  checks: GovernanceCheck[],
+  manifest: ManifestLike,
+  manifestRootPath: string,
+  workspaceNameToRoot: ReadonlyMap<string, string>,
+): void {
+  for (const section of MANIFEST_CATALOG_DEPENDENCY_SECTIONS) {
+    const dependencies = manifest?.[section];
+    if (!dependencies || typeof dependencies !== 'object') {
+      continue;
+    }
+
+    for (const [dependencyName, specifier] of Object.entries(dependencies)) {
+      if (workspaceNameToRoot.has(dependencyName)) {
+        continue;
+      }
+
+      if (typeof specifier === 'string' && specifier.startsWith('catalog:')) {
+        pushCheck(checks, {
+          file: normalizeForDisplay(path.join(manifestRootPath, PACKAGE_JSON_BASENAME)),
+          property: `${section}.${dependencyName}`,
+          status: 'ok',
+          expected: 'catalog: reference',
+          actual: specifier,
+          message: `${dependencyName} was scanned and resolves through the shared catalog.`,
+        });
+        continue;
+      }
+
+      pushCheck(checks, {
+        file: normalizeForDisplay(path.join(manifestRootPath, PACKAGE_JSON_BASENAME)),
+        property: `${section}.${dependencyName}`,
+        status: 'invalid',
+        expected: 'catalog: reference',
+        actual: formatValue(specifier),
+        message: `${dependencyName} must migrate its exact approved version into pnpm-workspace.yaml#catalog and reference it via catalog:.`,
       });
     }
   }
@@ -1959,10 +2011,64 @@ function auditAllowBuildsSurface(checks: GovernanceCheck[], workspace: Record<st
 
 function auditCatalogExactVersions(checks: GovernanceCheck[], workspace: Record<string, unknown>): void {
   const catalog = getNestedValue(workspace, 'catalog');
-  if (!isPlainObject(catalog)) {
+  if (isPlainObject(catalog)) {
+    auditCatalogVersionMap(checks, 'catalog', catalog);
+  }
+
+  const namedCatalogs = getNestedValue(workspace, 'catalogs');
+  if (namedCatalogs === undefined) {
     return;
   }
 
+  if (!isPlainObject(namedCatalogs)) {
+    pushCheck(checks, {
+      file: PNPM_WORKSPACE_BASENAME,
+      property: 'catalogs',
+      status: 'invalid',
+      expected: 'object of named catalog maps',
+      actual: formatValue(namedCatalogs),
+      message: 'catalogs must be an object map of named PNPM catalog sections.',
+    });
+    return;
+  }
+
+  const namedCatalogEntries = Object.entries(namedCatalogs).sort(([leftName], [rightName]) =>
+    leftName.localeCompare(rightName),
+  );
+  if (namedCatalogEntries.length === 0) {
+    pushCheck(checks, {
+      file: PNPM_WORKSPACE_BASENAME,
+      property: 'catalogs',
+      status: 'ok',
+      expected: 'named catalog map',
+      actual: '0 named catalogs',
+      message: 'catalogs is present as an empty named catalog map.',
+    });
+    return;
+  }
+
+  for (const [catalogName, catalogValue] of namedCatalogEntries) {
+    if (!isPlainObject(catalogValue)) {
+      pushCheck(checks, {
+        file: PNPM_WORKSPACE_BASENAME,
+        property: `catalogs.${catalogName}`,
+        status: 'invalid',
+        expected: 'object of exact semver catalog entries',
+        actual: formatValue(catalogValue),
+        message: `catalogs.${catalogName} must be an object map of explicit exact versions.`,
+      });
+      continue;
+    }
+
+    auditCatalogVersionMap(checks, `catalogs.${catalogName}`, catalogValue);
+  }
+}
+
+function auditCatalogVersionMap(
+  checks: GovernanceCheck[],
+  propertyPrefix: string,
+  catalog: Record<string, unknown>,
+): void {
   const entries = Object.entries(catalog).sort(([leftName], [rightName]) => leftName.localeCompare(rightName));
   const invalidEntries = entries.filter(([, specifier]) => !isCanonicalExactSemverString(specifier));
 
@@ -1970,11 +2076,11 @@ function auditCatalogExactVersions(checks: GovernanceCheck[], workspace: Record<
     for (const [packageName, specifier] of invalidEntries) {
       pushCheck(checks, {
         file: PNPM_WORKSPACE_BASENAME,
-        property: `catalog.${packageName}`,
+        property: `${propertyPrefix}.${packageName}`,
         status: 'invalid',
         expected: 'exact semver like 1.2.3',
         actual: formatValue(specifier),
-        message: 'Catalog entries must use explicit exact versions without ranges such as ^ or ~.',
+        message: `${propertyPrefix}.${packageName} must use an explicit exact semver version only. Range markers such as ^ or ~ are architecturally forbidden for supply-chain defense; migrate the approved exact version cleanly into this catalog entry.`,
       });
     }
     return;
@@ -1982,13 +2088,13 @@ function auditCatalogExactVersions(checks: GovernanceCheck[], workspace: Record<
 
   pushCheck(checks, {
     file: PNPM_WORKSPACE_BASENAME,
-    property: 'catalog exact versions',
+    property: `${propertyPrefix} exact versions`,
     status: 'ok',
     expected: 'exact semver only',
     actual: entries.length === 1 ? '1 exact entry' : `${entries.length} exact entries`,
     message: entries.length === 0
-      ? 'catalog is present as an empty approval map. Future entries must use explicit exact semver versions.'
-      : 'catalog entries use explicit exact semver versions only.',
+      ? `${propertyPrefix} is present as an empty approval map. Future entries must use explicit exact semver versions only.`
+      : `${propertyPrefix} entries are present and pinned to explicit exact semver versions only.`,
   });
 }
 

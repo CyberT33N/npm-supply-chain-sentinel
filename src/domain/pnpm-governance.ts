@@ -15,6 +15,10 @@ export const MANIFEST_DEPENDENCY_SECTIONS = Object.freeze([
   'optionalDependencies',
   'peerDependencies',
 ]);
+export const MANIFEST_CATALOG_DEPENDENCY_SECTIONS = Object.freeze([
+  'dependencies',
+  'devDependencies',
+]);
 export const GOVERNANCE_OWNER_SENTINEL_BASENAMES = Object.freeze([
   '.git',
   '.hg',
@@ -190,6 +194,7 @@ export const PNPM_RECOMMENDED_SECURITY_PROPERTIES = Object.freeze([
   'updateNotifier',
   'saveExact',
   'catalog',
+  'catalogs',
   'catalogMode',
   'cleanupUnusedCatalogs',
   'enablePrePostScripts',
