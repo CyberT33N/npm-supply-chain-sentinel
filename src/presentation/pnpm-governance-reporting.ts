@@ -2,6 +2,7 @@ import process from 'node:process';
 
 import type {
   GovernanceAudit,
+  GovernanceCheck,
   GovernanceProjectReport,
   GovernanceProjectTopology,
 } from '../application/pnpm-governance';
@@ -92,14 +93,11 @@ export function renderPnpmGovernanceAudit(governanceAudit: GovernanceAudit | nul
     console.log(
       `  Status: ${label} ok=${project.summary.okCount} warnings=${project.summary.warningCount} missing=${project.summary.missingCount} invalid=${project.summary.invalidCount}`,
     );
-    for (const check of project.checks.filter((check) => check.status !== 'ok')) {
-      const prefix = check.status === 'warning'
-        ? colorize(STATUS_WARN_SYMBOL, 'yellow')
-        : colorize(STATUS_ERROR_SYMBOL, 'red');
-      const expectation = check.expected ? ` | expected=${check.expected}` : '';
-      const actual = check.actual ? ` | actual=${check.actual}` : '';
-      console.log(`  ${prefix} ${check.property}: ${check.message}${expectation}${actual}`);
-    }
+    const okChecks = sortChecks(project.checks.filter((check) => check.status === 'ok'));
+    const failedChecks = sortChecks(project.checks.filter((check) => check.status !== 'ok'));
+    renderCheckSection('Successful checks:', okChecks, 'green', STATUS_OK_SYMBOL);
+    console.log('');
+    renderCheckSection('Failed checks:', failedChecks, 'red', STATUS_ERROR_SYMBOL);
   }
   console.log('');
 }
@@ -197,6 +195,35 @@ function statusPresentation(status: GovernanceProjectReport['status']): {
     colorName: 'yellow',
     label: 'warning',
   };
+}
+
+function sortChecks(checks: readonly GovernanceCheck[]): GovernanceCheck[] {
+  return [...checks].sort((left, right) => {
+    const propertyComparison = left.property.localeCompare(right.property);
+    if (propertyComparison !== 0) {
+      return propertyComparison;
+    }
+    const fileComparison = left.file.localeCompare(right.file);
+    if (fileComparison !== 0) {
+      return fileComparison;
+    }
+    return left.message.localeCompare(right.message);
+  });
+}
+
+function renderCheckSection(
+  title: string,
+  checks: readonly GovernanceCheck[],
+  colorName: 'green' | 'red',
+  symbol: string,
+): void {
+  console.log(`  ${colorize(title, colorName)}`);
+  for (const check of checks) {
+    const expectation = check.expected ? ` | expected=${check.expected}` : '';
+    const actual = check.actual ? ` | actual=${check.actual}` : '';
+    const details = `${check.property}: ${check.message}${expectation}${actual}`;
+    console.log(`    ${colorize(symbol, colorName)} ${colorize(details, colorName)}`);
+  }
 }
 
 function summarizePassHighlights(project: GovernanceProjectReport): string[] {
