@@ -111,26 +111,8 @@ describe('auditPnpmGovernance', () => {
           relativePath: path.join('domains', 'billing-domain'),
           packageJson: createPackageJson({
             name: '@fixture/billing-domain',
-            engines: {
-              node: '>=26.2.0',
-            },
-            devEngines: {
-              runtime: {
-                name: 'node',
-                version: '>=26.2.0',
-                onFail: 'error',
-              },
-              packageManager: {
-                name: 'pnpm',
-                version: '11.2.2',
-                onFail: 'error',
-              },
-            },
           }),
-          workspaceText: BASE_WORKSPACE_TEXT.replace(
-            /^nodeVersion: .+$/mu,
-            'nodeVersion: 26.2.0',
-          ),
+          workspaceText: BASE_WORKSPACE_TEXT,
           lockfileText: 'lockfileVersion: "9.0"\n',
         },
       ],

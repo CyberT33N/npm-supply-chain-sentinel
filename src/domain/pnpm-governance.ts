@@ -1,11 +1,12 @@
 export const CURRENT_NODE_LTS = Object.freeze({
-  version: '24.16.0',
-  major: 24,
-  checkedAt: '2026-05-21',
-  source: 'https://nodejs.org/en/about/previous-releases',
+  version: '26.2.0',
+  major: 26,
+  checkedAt: '2026-05-26',
+  source: 'TS_PACKAGE_MANAGER_PNPM_WORKSPACE_FORTRESS_CORE_REFERENCE_001.mdc',
 });
 
 export const REQUIRED_PNPM_MAJOR = 11;
+export const REQUIRED_PNPM_VERSION = '11.2.2';
 export const PNPM_WORKSPACE_BASENAME = 'pnpm-workspace.yaml';
 export const PNPM_LOCKFILE_BASENAME = 'pnpm-lock.yaml';
 export const PROJECT_AUTH_FILE_BASENAMES = new Set(['.npmrc', 'auth.ini']);
@@ -85,6 +86,7 @@ export const SHARED_WORKSPACE_EXACT_RULES = Object.freeze([
   ['ignoreCompatibilityDb', true],
   ['updateNotifier', false],
   ['saveExact', true],
+  ['savePrefix', ''],
   ['catalogMode', 'strict'],
   ['cleanupUnusedCatalogs', true],
   ['enablePrePostScripts', false],
@@ -102,14 +104,14 @@ export const SHARED_WORKSPACE_EMPTY_ARRAY_RULES = Object.freeze([
 
 export const SHARED_WORKSPACE_EMPTY_OBJECT_RULES = Object.freeze([
   'peerDependencyRules.allowedVersions',
+  'overrides',
+  'packageExtensions',
+  'allowedDeprecatedVersions',
 ]);
 
 export const SHARED_WORKSPACE_OBJECT_RULES = Object.freeze([
   'allowBuilds',
   'catalog',
-  'overrides',
-  'packageExtensions',
-  'allowedDeprecatedVersions',
 ]);
 
 export const MONOREPO_WORKSPACE_EXACT_RULES = Object.freeze([
@@ -120,7 +122,6 @@ export const MONOREPO_WORKSPACE_EXACT_RULES = Object.freeze([
   ['linkWorkspacePackages', false],
   ['preferWorkspacePackages', false],
   ['saveWorkspaceProtocol', true],
-  ['savePrefix', ''],
   ['injectWorkspacePackages', false],
   ['dedupeInjectedDeps', true],
   ['hoistWorkspacePackages', false],
@@ -141,7 +142,6 @@ export const SINGLE_PROJECT_FORBIDDEN_WORKSPACE_RULES = Object.freeze([
   'linkWorkspacePackages',
   'preferWorkspacePackages',
   'saveWorkspaceProtocol',
-  'savePrefix',
   'injectWorkspacePackages',
   'dedupeInjectedDeps',
   'hoistWorkspacePackages',
@@ -193,6 +193,7 @@ export const PNPM_RECOMMENDED_SECURITY_PROPERTIES = Object.freeze([
   'ignoreCompatibilityDb',
   'updateNotifier',
   'saveExact',
+  'savePrefix',
   'catalog',
   'catalogs',
   'catalogMode',

@@ -9,13 +9,10 @@
     "npm-supply-chain-sentinel": "./bin/npm-supply-chain-sentinel.js",
     "npm-supply-chain-sentinel-pnpm-governance": "./bin/npm-supply-chain-sentinel-pnpm-governance.js"
   },
-  "engines": {
-    "node": ">=24.16.0"
-  },
   "devEngines": {
     "runtime": {
       "name": "node",
-      "version": ">=24.16.0",
+      "version": "26.2.0",
       "onFail": "error"
     },
     "packageManager": {

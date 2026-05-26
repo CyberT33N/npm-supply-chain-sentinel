@@ -89,6 +89,12 @@ describe('renderPnpmGovernanceAudit', () => {
     expect(output).toContain(
       'dependencies.minimatch: minimatch was scanned and resolves through the shared catalog. | expected=catalog: reference | actual=catalog:',
     );
+    expect(output).toContain(
+      'devEngines.runtime.version = nodeVersion: devEngines.runtime.version and pnpm-workspace.yaml#nodeVersion are aligned on 26.2.0. | expected=same exact semver in package.json and pnpm-workspace.yaml | actual=26.2.0',
+    );
+    expect(output).toContain(
+      'engines.node: engines.node is intentionally unset to avoid a third root-level Node.js version authority and version drift. | expected=unset | actual=unset',
+    );
   });
 
   it('colors successful sections green and failed sections red on TTY output', async () => {
@@ -124,9 +130,11 @@ describe('renderPnpmGovernanceAudit', () => {
       renderPnpmGovernanceAudit(audit);
     });
 
-    expect(output).toContain('  Successful checks:');
     expect(output).toContain(
-      'catalogs.ui exact versions: catalogs.ui entries are present and pinned to explicit exact semver versions only. | expected=exact semver only | actual=2 exact entries',
+      'Fortress governance check passed.',
+    );
+    expect(output).toContain(
+      'catalog_versions=exact',
     );
   });
 });

@@ -66,7 +66,9 @@ export const PNPM_RUNTIME: PnpmRuntimeInfo = Object.freeze({
   version: '11.2.2',
   major: 11,
   requiredMajor: 11,
+  requiredVersion: '11.2.2',
   matchesRequiredMajor: true,
+  matchesRequiredVersion: true,
   warning: null,
 });
 
@@ -128,7 +130,6 @@ export function buildMonorepoWorkspaceText(
     'linkWorkspacePackages: false',
     'preferWorkspacePackages: false',
     'saveWorkspaceProtocol: true',
-    'savePrefix: ""',
     'injectWorkspacePackages: false',
     'dedupeInjectedDeps: true',
     'hoistWorkspacePackages: false',

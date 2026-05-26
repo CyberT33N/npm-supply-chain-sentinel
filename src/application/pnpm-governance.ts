@@ -17,6 +17,7 @@ import {
   PNPM_WORKSPACE_BASENAME,
   PROJECT_AUTH_FILE_BASENAMES,
   REQUIRED_PNPM_MAJOR,
+  REQUIRED_PNPM_VERSION,
   SECURITY_EXCEPTION_WORKSPACE_RULES,
   SHARED_WORKSPACE_EMPTY_ARRAY_RULES,
   SHARED_WORKSPACE_EMPTY_OBJECT_RULES,
@@ -77,7 +78,9 @@ export interface PnpmRuntimeInfo {
   version: string | null;
   major: number | null;
   requiredMajor: number;
+  requiredVersion: string;
   matchesRequiredMajor: boolean;
+  matchesRequiredVersion: boolean;
   warning: string | null;
 }
 
@@ -218,7 +221,7 @@ export interface GovernanceAuditSummary {
 
 export interface GovernanceAudit {
   pnpmRuntime: PnpmRuntimeInfo;
-  nodeLtsFloor: typeof CURRENT_NODE_LTS;
+  nodeRuntimeContract: typeof CURRENT_NODE_LTS;
   recommendedProperties: readonly string[];
   discovery: GovernanceDiscoverySummary;
   projects: GovernanceProjectReport[];
@@ -245,8 +248,10 @@ export function inspectPnpmRuntime(): PnpmRuntimeInfo {
       version: null,
       major: null,
       requiredMajor: REQUIRED_PNPM_MAJOR,
+      requiredVersion: REQUIRED_PNPM_VERSION,
       matchesRequiredMajor: false,
-      warning: runtime.warning ?? `pnpm is not installed on this machine. Install pnpm ${REQUIRED_PNPM_MAJOR}.x to activate Fortress governance settings.`,
+      matchesRequiredVersion: false,
+      warning: runtime.warning ?? `pnpm is not installed on this machine. Install pnpm ${REQUIRED_PNPM_VERSION} to activate Fortress governance settings.`,
     };
   }
 
@@ -257,11 +262,13 @@ export function inspectPnpmRuntime(): PnpmRuntimeInfo {
     version: versionText,
     major,
     requiredMajor: REQUIRED_PNPM_MAJOR,
+    requiredVersion: REQUIRED_PNPM_VERSION,
     matchesRequiredMajor: major === REQUIRED_PNPM_MAJOR,
+    matchesRequiredVersion: versionText === REQUIRED_PNPM_VERSION,
     warning:
-      major === REQUIRED_PNPM_MAJOR
+      versionText === REQUIRED_PNPM_VERSION
         ? null
-        : `pnpm ${versionText ?? 'unknown'} is installed, but this policy expects pnpm ${REQUIRED_PNPM_MAJOR}.x.`,
+        : `pnpm ${versionText ?? 'unknown'} is installed, but this policy expects pnpm ${REQUIRED_PNPM_VERSION}.`,
   };
 }
 
@@ -295,7 +302,7 @@ function detectPnpmRuntimeVersion(): RuntimeDetection {
 
   return {
     available: false,
-    warning: `pnpm is not installed on this machine. Install pnpm ${REQUIRED_PNPM_MAJOR}.x to activate Fortress governance settings.`,
+    warning: `pnpm is not installed on this machine. Install pnpm ${REQUIRED_PNPM_VERSION} to activate Fortress governance settings.`,
   };
 }
 
@@ -330,7 +337,7 @@ export function auditPnpmGovernance(
 
   return {
     pnpmRuntime,
-    nodeLtsFloor: CURRENT_NODE_LTS,
+    nodeRuntimeContract: CURRENT_NODE_LTS,
     recommendedProperties: PNPM_RECOMMENDED_SECURITY_PROPERTIES,
     discovery: discovery.summary,
     projects,
@@ -695,8 +702,8 @@ function auditProjectRoot(
   const classification = classifyProject(rootPath, packageJson.value, workspaceDocument, pnpmLockfilePath);
 
   if (classification.isPnpmProject) {
+    const workspaceConfig = toWorkspaceConfig(workspaceDocument.value);
     if (classification.kind === 'pnpm-monorepo' && workspaceDocument.value) {
-      const workspaceConfig = toWorkspaceConfig(workspaceDocument.value);
       const members = discoverWorkspaceMembers(rootPath, workspaceConfig?.packages);
       workspaceMembers.push(...members);
     }
@@ -704,6 +711,7 @@ function auditProjectRoot(
     auditPnpmRuntime(checks, pnpmRuntime);
     auditWorkspaceFile(checks, classification, workspaceDocument);
     auditRootPackageJson(checks, packageJson, classification, rootPath, workspaceMembers);
+    auditRuntimeIdentityContract(checks, packageJson.value, workspaceConfig);
     auditLockfile(checks, pnpmLockfilePath);
     auditProjectAuthFiles(checks, gitignorePath, [npmrcPath, authIniPath]);
 
@@ -796,9 +804,9 @@ function auditPnpmRuntime(checks: GovernanceCheck[], pnpmRuntime: PnpmRuntimeInf
       file: 'machine',
       property: 'pnpm',
       status: 'warning',
-      expected: `pnpm ${REQUIRED_PNPM_MAJOR}.x installed`,
+      expected: `pnpm ${REQUIRED_PNPM_VERSION} installed`,
       actual: 'missing',
-      message: pnpmRuntime.warning ?? `pnpm ${REQUIRED_PNPM_MAJOR}.x is not installed on this machine.`,
+      message: pnpmRuntime.warning ?? `pnpm ${REQUIRED_PNPM_VERSION} is not installed on this machine.`,
     });
     return;
   }
@@ -806,12 +814,12 @@ function auditPnpmRuntime(checks: GovernanceCheck[], pnpmRuntime: PnpmRuntimeInf
   pushCheck(checks, {
     file: 'machine',
     property: 'pnpm',
-    status: pnpmRuntime.matchesRequiredMajor ? 'ok' : 'warning',
-    expected: `pnpm ${REQUIRED_PNPM_MAJOR}.x`,
+    status: pnpmRuntime.matchesRequiredVersion ? 'ok' : 'warning',
+    expected: `pnpm ${REQUIRED_PNPM_VERSION}`,
     actual: pnpmRuntime.version ?? 'unknown',
-    message: pnpmRuntime.matchesRequiredMajor
+    message: pnpmRuntime.matchesRequiredVersion
       ? `pnpm ${pnpmRuntime.version} is installed on this machine.`
-      : pnpmRuntime.warning ?? `pnpm ${REQUIRED_PNPM_MAJOR}.x is required on this machine.`,
+      : pnpmRuntime.warning ?? `pnpm ${REQUIRED_PNPM_VERSION} is required on this machine.`,
   });
 }
 
@@ -852,7 +860,7 @@ function auditWorkspaceFile(
     pushEqualityCheck(checks, workspace, PNPM_WORKSPACE_BASENAME, property, expected);
   }
 
-  auditExactSemverFloor(checks, workspace, PNPM_WORKSPACE_BASENAME, 'nodeVersion', CURRENT_NODE_LTS.version);
+  auditExactSemverString(checks, workspace, PNPM_WORKSPACE_BASENAME, 'nodeVersion');
   auditHttpsRegistry(checks, workspace, PNPM_WORKSPACE_BASENAME, 'registries.default');
 
   for (const property of SHARED_WORKSPACE_EMPTY_ARRAY_RULES) {
@@ -999,8 +1007,8 @@ function auditPackageManagerField(checks: GovernanceCheck[], manifest: ManifestL
       file: PACKAGE_JSON_BASENAME,
       property: 'packageManager',
       status: 'missing',
-      expected: `pnpm@${REQUIRED_PNPM_MAJOR}.x`,
-      message: 'packageManager must pin PNPM 11 explicitly.',
+      expected: `pnpm@${REQUIRED_PNPM_VERSION}`,
+      message: `packageManager must pin PNPM ${REQUIRED_PNPM_VERSION} exactly.`,
     });
     return;
   }
@@ -1011,7 +1019,7 @@ function auditPackageManagerField(checks: GovernanceCheck[], manifest: ManifestL
       file: PACKAGE_JSON_BASENAME,
       property: 'packageManager',
       status: 'invalid',
-      expected: `pnpm@${REQUIRED_PNPM_MAJOR}.x`,
+      expected: `pnpm@${REQUIRED_PNPM_VERSION}`,
       actual: rawValue,
       message: 'packageManager must point to pnpm.',
     });
@@ -1019,15 +1027,27 @@ function auditPackageManagerField(checks: GovernanceCheck[], manifest: ManifestL
   }
 
   const matchedVersion = match[1];
-  const version = typeof matchedVersion === 'string' ? semver.coerce(matchedVersion)?.version ?? null : null;
-  if (!version || semver.major(version) !== REQUIRED_PNPM_MAJOR) {
+  const version = typeof matchedVersion === 'string' ? semver.valid(matchedVersion) : null;
+  if (!version) {
     pushCheck(checks, {
       file: PACKAGE_JSON_BASENAME,
       property: 'packageManager',
       status: 'invalid',
-      expected: `pnpm@${REQUIRED_PNPM_MAJOR}.x`,
+      expected: `pnpm@${REQUIRED_PNPM_VERSION}`,
       actual: rawValue,
-      message: `packageManager must pin PNPM ${REQUIRED_PNPM_MAJOR}.x.`,
+      message: 'packageManager must pin an exact PNPM semver version.',
+    });
+    return;
+  }
+
+  if (version !== REQUIRED_PNPM_VERSION) {
+    pushCheck(checks, {
+      file: PACKAGE_JSON_BASENAME,
+      property: 'packageManager',
+      status: 'invalid',
+      expected: `pnpm@${REQUIRED_PNPM_VERSION}`,
+      actual: rawValue,
+      message: `packageManager must pin PNPM ${REQUIRED_PNPM_VERSION} exactly.`,
     });
     return;
   }
@@ -1036,7 +1056,7 @@ function auditPackageManagerField(checks: GovernanceCheck[], manifest: ManifestL
     file: PACKAGE_JSON_BASENAME,
     property: 'packageManager',
     status: 'ok',
-    expected: `pnpm@${REQUIRED_PNPM_MAJOR}.x`,
+    expected: `pnpm@${REQUIRED_PNPM_VERSION}`,
     actual: rawValue,
     message: `packageManager pins ${rawValue}.`,
   });
@@ -1044,26 +1064,14 @@ function auditPackageManagerField(checks: GovernanceCheck[], manifest: ManifestL
 
 function auditEnginesNode(checks: GovernanceCheck[], manifest: ManifestLike): void {
   const enginesNode = manifest?.engines?.node;
-  if (typeof enginesNode !== 'string') {
+  if (enginesNode === undefined) {
     pushCheck(checks, {
       file: PACKAGE_JSON_BASENAME,
       property: 'engines.node',
-      status: 'missing',
-      expected: `minimum ${CURRENT_NODE_LTS.version}`,
-      message: 'engines.node must declare at least the current Node.js LTS floor.',
-    });
-    return;
-  }
-
-  const minimum = semver.minVersion(enginesNode);
-  if (!minimum || semver.lt(minimum, CURRENT_NODE_LTS.version)) {
-    pushCheck(checks, {
-      file: PACKAGE_JSON_BASENAME,
-      property: 'engines.node',
-      status: 'invalid',
-      expected: `minimum ${CURRENT_NODE_LTS.version}`,
-      actual: enginesNode,
-      message: `engines.node must not allow versions below ${CURRENT_NODE_LTS.version}.`,
+      status: 'ok',
+      expected: 'unset',
+      actual: 'unset',
+      message: 'engines.node is intentionally unset to avoid a third root-level Node.js version authority and version drift.',
     });
     return;
   }
@@ -1071,10 +1079,10 @@ function auditEnginesNode(checks: GovernanceCheck[], manifest: ManifestLike): vo
   pushCheck(checks, {
     file: PACKAGE_JSON_BASENAME,
     property: 'engines.node',
-    status: 'ok',
-    expected: `minimum ${CURRENT_NODE_LTS.version}`,
-    actual: enginesNode,
-    message: `engines.node starts at ${minimum.version}.`,
+    status: 'invalid',
+    expected: 'unset',
+    actual: formatValue(enginesNode),
+    message: 'engines.node must stay unset by default. The exact internal runtime contract already lives in devEngines.runtime.version and pnpm-workspace.yaml#nodeVersion.',
   });
 }
 
@@ -1116,28 +1124,28 @@ function auditDevRuntime(checks: GovernanceCheck[], manifest: ManifestLike): voi
       file: PACKAGE_JSON_BASENAME,
       property: 'devEngines.runtime.version',
       status: 'missing',
-      expected: `minimum ${CURRENT_NODE_LTS.version}`,
+      expected: 'exact semver string',
       message: 'devEngines.runtime.version must be declared.',
     });
   } else {
-    const minimum = semver.minVersion(version);
-    if (!minimum || semver.lt(minimum, CURRENT_NODE_LTS.version)) {
+    const exactVersion = semver.valid(version);
+    if (!exactVersion) {
       pushCheck(checks, {
         file: PACKAGE_JSON_BASENAME,
         property: 'devEngines.runtime.version',
         status: 'invalid',
-        expected: `minimum ${CURRENT_NODE_LTS.version}`,
+        expected: 'exact semver string',
         actual: version,
-        message: `devEngines.runtime.version must not allow versions below ${CURRENT_NODE_LTS.version}.`,
+        message: 'devEngines.runtime.version must be an exact semver string with no range markers such as ^, ~, >, or >=.',
       });
     } else {
       pushCheck(checks, {
         file: PACKAGE_JSON_BASENAME,
         property: 'devEngines.runtime.version',
         status: 'ok',
-        expected: `minimum ${CURRENT_NODE_LTS.version}`,
-        actual: version,
-        message: `devEngines.runtime.version starts at ${minimum.version}.`,
+        expected: 'exact semver string',
+        actual: exactVersion,
+        message: `devEngines.runtime.version pins the exact approved Node.js runtime contract at ${exactVersion}.`,
       });
     }
   }
@@ -1183,33 +1191,80 @@ function auditDevPackageManager(checks: GovernanceCheck[], manifest: ManifestLik
       file: PACKAGE_JSON_BASENAME,
       property: 'devEngines.packageManager.version',
       status: 'missing',
-      expected: `${REQUIRED_PNPM_MAJOR}.x`,
-      message: 'devEngines.packageManager.version must target PNPM 11.',
+      expected: REQUIRED_PNPM_VERSION,
+      message: `devEngines.packageManager.version must pin PNPM ${REQUIRED_PNPM_VERSION} exactly.`,
     });
   } else {
-    const minimum = semver.minVersion(version);
-    if (!minimum || semver.major(minimum) !== REQUIRED_PNPM_MAJOR) {
+    const exactVersion = semver.valid(version);
+    if (!exactVersion) {
       pushCheck(checks, {
         file: PACKAGE_JSON_BASENAME,
         property: 'devEngines.packageManager.version',
         status: 'invalid',
-        expected: `${REQUIRED_PNPM_MAJOR}.x`,
+        expected: REQUIRED_PNPM_VERSION,
         actual: version,
-        message: `devEngines.packageManager.version must target PNPM ${REQUIRED_PNPM_MAJOR}.x.`,
+        message: 'devEngines.packageManager.version must be an exact semver string with no range markers.',
+      });
+    } else if (exactVersion !== REQUIRED_PNPM_VERSION) {
+      pushCheck(checks, {
+        file: PACKAGE_JSON_BASENAME,
+        property: 'devEngines.packageManager.version',
+        status: 'invalid',
+        expected: REQUIRED_PNPM_VERSION,
+        actual: exactVersion,
+        message: `devEngines.packageManager.version must pin PNPM ${REQUIRED_PNPM_VERSION} exactly.`,
       });
     } else {
       pushCheck(checks, {
         file: PACKAGE_JSON_BASENAME,
         property: 'devEngines.packageManager.version',
         status: 'ok',
-        expected: `${REQUIRED_PNPM_MAJOR}.x`,
-        actual: version,
-        message: `devEngines.packageManager.version starts at ${minimum.version}.`,
+        expected: REQUIRED_PNPM_VERSION,
+        actual: exactVersion,
+        message: `devEngines.packageManager.version pins PNPM ${exactVersion}.`,
       });
     }
   }
 
   pushEqualityCheck(checks, packageManager, PACKAGE_JSON_BASENAME, 'onFail', 'error', 'devEngines.packageManager.onFail');
+}
+
+function auditRuntimeIdentityContract(
+  checks: GovernanceCheck[],
+  packageJson: unknown,
+  workspace: WorkspaceConfig | null,
+): void {
+  const manifest = toManifest(packageJson);
+  const runtimeVersion = typeof manifest?.devEngines?.runtime?.version === 'string'
+    ? semver.valid(manifest.devEngines.runtime.version)
+    : null;
+  const nodeVersion = typeof workspace?.['nodeVersion'] === 'string'
+    ? semver.valid(workspace['nodeVersion'])
+    : null;
+  if (!runtimeVersion || !nodeVersion) {
+    return;
+  }
+
+  if (runtimeVersion !== nodeVersion) {
+    pushCheck(checks, {
+      file: PACKAGE_JSON_BASENAME,
+      property: 'devEngines.runtime.version = nodeVersion',
+      status: 'invalid',
+      expected: 'same exact semver in package.json and pnpm-workspace.yaml',
+      actual: `${runtimeVersion} vs ${nodeVersion}`,
+      message: 'devEngines.runtime.version and pnpm-workspace.yaml#nodeVersion must remain identical to prevent Node.js runtime drift.',
+    });
+    return;
+  }
+
+  pushCheck(checks, {
+    file: PACKAGE_JSON_BASENAME,
+    property: 'devEngines.runtime.version = nodeVersion',
+    status: 'ok',
+    expected: 'same exact semver in package.json and pnpm-workspace.yaml',
+    actual: runtimeVersion,
+    message: `devEngines.runtime.version and pnpm-workspace.yaml#nodeVersion are aligned on ${runtimeVersion}.`,
+  });
 }
 
 function auditLockfile(checks: GovernanceCheck[], pnpmLockfilePath: string): void {
@@ -1701,35 +1756,34 @@ function auditNumericMaximum(
   });
 }
 
-function auditExactSemverFloor(
+function auditExactSemverString(
   checks: GovernanceCheck[],
   object: Record<string, unknown>,
   fileName: string,
   property: string,
-  minimumVersion: string,
 ): void {
   const actual = getNestedValue(object, property);
-  const valid = typeof actual === 'string' ? semver.valid(actual) : null;
-  if (!valid) {
+  if (typeof actual !== 'string') {
     pushCheck(checks, {
       file: fileName,
       property,
       status: 'missing',
-      expected: `exact semver >= ${minimumVersion}`,
+      expected: 'exact semver string',
       actual: formatValue(actual),
-      message: `${property} must be an exact semver string.`,
+      message: `${property} must be declared as an exact semver string.`,
     });
     return;
   }
 
-  if (semver.lt(valid, minimumVersion)) {
+  const valid = semver.valid(actual);
+  if (!valid) {
     pushCheck(checks, {
       file: fileName,
       property,
       status: 'invalid',
-      expected: `exact semver >= ${minimumVersion}`,
-      actual: valid,
-      message: `${property} is below the current Node.js LTS floor ${minimumVersion}.`,
+      expected: 'exact semver string',
+      actual,
+      message: `${property} must be an exact semver string.`,
     });
     return;
   }
@@ -1738,7 +1792,7 @@ function auditExactSemverFloor(
     file: fileName,
     property,
     status: 'ok',
-    expected: `exact semver >= ${minimumVersion}`,
+    expected: 'exact semver string',
     actual: valid,
     message: `${property} is pinned to ${valid}.`,
   });
@@ -1758,7 +1812,7 @@ function auditHttpsRegistry(
       status: 'missing',
       expected: 'HTTPS registry URL',
       actual: formatValue(actual),
-      message: `${property} must point to an approved HTTPS registry.`,
+      message: `${property} must point to an approved HTTPS registry. Prefer a reviewed internal registry such as Nexus; if none exists, use the official npm registry over HTTPS.`,
     });
     return;
   }
@@ -1955,9 +2009,9 @@ function auditObjectSurface(
       file: fileName,
       property,
       status: 'missing',
-      expected: 'object',
+      expected: 'object map',
       actual: formatValue(actual),
-      message: `${property} must be present as an object.`,
+      message: `${property} must be present as an object map.`,
     });
     return;
   }
@@ -1966,9 +2020,9 @@ function auditObjectSurface(
     file: fileName,
     property,
     status: 'ok',
-    expected: 'object',
+    expected: 'object map',
     actual: `${Object.keys(actual).length} keys`,
-    message: `${property} is present as an object.`,
+    message: `${property} is present as an object map.`,
   });
 }
 

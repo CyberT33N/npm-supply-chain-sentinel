@@ -108,7 +108,7 @@ export function serializeGovernanceAudit(governanceAudit: GovernanceAudit | null
   }
 
   return {
-    nodeLtsFloor: governanceAudit.nodeLtsFloor,
+    nodeRuntimeContract: governanceAudit.nodeRuntimeContract,
     recommendedProperties: governanceAudit.recommendedProperties,
     pnpmRuntime: governanceAudit.pnpmRuntime,
     discovery: governanceAudit.discovery ?? null,
@@ -232,7 +232,7 @@ function summarizePassHighlights(project: GovernanceProjectReport): string[] {
     highlights.push('save_exact=true');
   }
   if (hasAnyCatalogExactVersionCheck(project)) {
-    highlights.push('catalog_versions=explicit');
+    highlights.push('catalog_versions=exact');
   }
   return highlights;
 }

@@ -14,7 +14,7 @@ registries:
   default: https://registry.npmjs.org/
 strictSsl: true
 
-nodeVersion: 24.16.0
+nodeVersion: 26.2.0
 engineStrict: true
 pmOnFail: error
 runtimeOnFail: error
@@ -40,10 +40,15 @@ autoInstallPeers: false
 strictPeerDependencies: true
 peerDependencyRules:
   ignoreMissing: []
+  allowedVersions: {}
   allowAny: []
+overrides: {}
+packageExtensions: {}
+allowedDeprecatedVersions: {}
 ignoreCompatibilityDb: true
 updateNotifier: false
 saveExact: true
+savePrefix: ""
 
 catalog:
   '@sindresorhus/is': 8.1.0
