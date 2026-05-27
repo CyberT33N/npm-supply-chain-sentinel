@@ -9,6 +9,11 @@ export interface GovernancePnpmPolicy {
   requiredVersion: string;
   requiredMajor: number;
   latestVersion: string | null;
+  minimumReleaseAgeMinutes: number;
+  latestPublishedAt: string | null;
+  requiredPublishedAt: string | null;
+  releaseAgeCutoff: string | null;
+  latestDeferredByMinimumReleaseAge: boolean;
   checkedAt: string;
   source: string;
   liveResolved: boolean;
@@ -40,6 +45,7 @@ export const CURRENT_NODE_LTS: NodeRuntimeContract = Object.freeze({
   source: REFERENCE_TOOLCHAIN_SOURCE,
 });
 
+export const FORTRESS_MINIMUM_RELEASE_AGE_MINUTES = 10080;
 export const REQUIRED_PNPM_MAJOR = 11;
 export const REQUIRED_PNPM_VERSION = '11.2.2';
 export const OFFICIAL_NPM_REGISTRY_URL = 'https://registry.npmjs.org/';
@@ -93,7 +99,7 @@ export const GOVERNANCE_DISCOVERY_EXCLUDED_DIR_NAMES = new Set([
 ]);
 
 export const SHARED_WORKSPACE_EXACT_RULES = Object.freeze([
-  ['minimumReleaseAge', 10080],
+  ['minimumReleaseAge', FORTRESS_MINIMUM_RELEASE_AGE_MINUTES],
   ['minimumReleaseAgeIgnoreMissingTime', false],
   ['minimumReleaseAgeStrict', true],
   ['trustPolicy', 'no-downgrade'],
@@ -415,6 +421,11 @@ export function createReferenceGovernanceToolchainPolicy(): GovernanceToolchainP
       requiredVersion: REQUIRED_PNPM_VERSION,
       requiredMajor: REQUIRED_PNPM_MAJOR,
       latestVersion: null,
+      minimumReleaseAgeMinutes: FORTRESS_MINIMUM_RELEASE_AGE_MINUTES,
+      latestPublishedAt: null,
+      requiredPublishedAt: null,
+      releaseAgeCutoff: null,
+      latestDeferredByMinimumReleaseAge: false,
       checkedAt: CURRENT_NODE_LTS.checkedAt,
       source: REFERENCE_TOOLCHAIN_SOURCE,
       liveResolved: false,

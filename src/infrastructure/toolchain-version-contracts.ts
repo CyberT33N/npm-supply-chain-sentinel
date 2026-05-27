@@ -27,6 +27,15 @@ interface ParsedNodeReleasePolicy {
   ltsCodename: string | null;
 }
 
+interface ParsedPnpmReleasePolicy {
+  latestVersion: string;
+  latestPublishedAt: string | null;
+  requiredVersion: string;
+  requiredPublishedAt: string | null;
+  releaseAgeCutoff: string;
+  latestDeferredByMinimumReleaseAge: boolean;
+}
+
 function isJsonRecord(value: unknown): value is JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -53,16 +62,21 @@ async function resolvePnpmPolicy(
 ): Promise<PolicyResolution<GovernancePnpmPolicy>> {
   try {
     const response = await fetchJson(PNPM_PACKAGE_METADATA_URL);
-    const latestVersion = parsePnpmLatestVersion(response);
-    if (!latestVersion) {
-      throw new TypeError('The npm registry response did not expose a valid dist-tags.latest semver.');
+    const parsed = parsePnpmReleasePolicy(response, referencePolicy.minimumReleaseAgeMinutes, resolvedAt);
+    if (!parsed) {
+      throw new TypeError('The npm registry response did not expose a valid mature PNPM release contract.');
     }
 
     return {
       policy: {
-        requiredVersion: latestVersion,
-        requiredMajor: semver.major(latestVersion),
-        latestVersion,
+        requiredVersion: parsed.requiredVersion,
+        requiredMajor: semver.major(parsed.requiredVersion),
+        latestVersion: parsed.latestVersion,
+        minimumReleaseAgeMinutes: referencePolicy.minimumReleaseAgeMinutes,
+        latestPublishedAt: parsed.latestPublishedAt,
+        requiredPublishedAt: parsed.requiredPublishedAt,
+        releaseAgeCutoff: parsed.releaseAgeCutoff,
+        latestDeferredByMinimumReleaseAge: parsed.latestDeferredByMinimumReleaseAge,
         checkedAt: resolvedAt,
         source: PNPM_PACKAGE_METADATA_URL,
         liveResolved: true,
@@ -157,6 +171,102 @@ function parsePnpmLatestVersion(value: unknown): string | null {
   }
 
   return semver.valid(latest);
+}
+
+function parsePnpmReleasePolicy(
+  value: unknown,
+  minimumReleaseAgeMinutes: number,
+  resolvedAt: string,
+): ParsedPnpmReleasePolicy | null {
+  const latestVersion = parsePnpmLatestVersion(value);
+  if (!latestVersion) {
+    return null;
+  }
+
+  const resolvedTimestamp = Date.parse(resolvedAt);
+  if (Number.isNaN(resolvedTimestamp)) {
+    return null;
+  }
+
+  const publishedAtByVersion = parsePnpmVersionPublishTimes(value);
+  const releaseAgeCutoffTimestamp = resolvedTimestamp - (minimumReleaseAgeMinutes * 60 * 1000);
+  const releaseAgeCutoff = new Date(releaseAgeCutoffTimestamp).toISOString();
+  const latestPublishedAt = publishedAtByVersion.get(latestVersion) ?? null;
+
+  if (isPublishedAtOrBeforeCutoff(latestPublishedAt, releaseAgeCutoffTimestamp)) {
+    return {
+      latestVersion,
+      latestPublishedAt,
+      requiredVersion: latestVersion,
+      requiredPublishedAt: latestPublishedAt,
+      releaseAgeCutoff,
+      latestDeferredByMinimumReleaseAge: false,
+    };
+  }
+
+  const highestMatureVersion = [...publishedAtByVersion.entries()]
+    .filter(([, publishedAt]) => isPublishedAtOrBeforeCutoff(publishedAt, releaseAgeCutoffTimestamp))
+    .toSorted(([leftVersion], [rightVersion]) => semver.rcompare(leftVersion, rightVersion))[0];
+  if (!highestMatureVersion) {
+    return null;
+  }
+
+  const [requiredVersion, requiredPublishedAt] = highestMatureVersion;
+  return {
+    latestVersion,
+    latestPublishedAt,
+    requiredVersion,
+    requiredPublishedAt,
+    releaseAgeCutoff,
+    latestDeferredByMinimumReleaseAge: latestVersion !== requiredVersion,
+  };
+}
+
+function parsePnpmVersionPublishTimes(value: unknown): ReadonlyMap<string, string> {
+  if (!isJsonRecord(value)) {
+    return new Map();
+  }
+
+  const time = value['time'];
+  if (!isJsonRecord(time)) {
+    return new Map();
+  }
+
+  const publishedAtByVersion = new Map<string, string>();
+  for (const [rawVersion, rawPublishedAt] of Object.entries(time)) {
+    const version = semver.valid(rawVersion);
+    if (!version || typeof rawPublishedAt !== 'string') {
+      continue;
+    }
+    if (semver.prerelease(version) !== null) {
+      continue;
+    }
+
+    const publishedAtTimestamp = Date.parse(rawPublishedAt);
+    if (Number.isNaN(publishedAtTimestamp)) {
+      continue;
+    }
+
+    publishedAtByVersion.set(version, new Date(publishedAtTimestamp).toISOString());
+  }
+
+  return publishedAtByVersion;
+}
+
+function isPublishedAtOrBeforeCutoff(
+  publishedAt: string | null,
+  releaseAgeCutoffTimestamp: number,
+): boolean {
+  if (!publishedAt) {
+    return false;
+  }
+
+  const publishedAtTimestamp = Date.parse(publishedAt);
+  if (Number.isNaN(publishedAtTimestamp)) {
+    return false;
+  }
+
+  return publishedAtTimestamp <= releaseAgeCutoffTimestamp;
 }
 
 function parseNodeReleasePolicy(value: unknown): ParsedNodeReleasePolicy | null {

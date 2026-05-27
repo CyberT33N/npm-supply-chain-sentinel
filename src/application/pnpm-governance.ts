@@ -329,7 +329,7 @@ export function inspectPnpmRuntime(
     warning:
       versionText === pnpmPolicy.requiredVersion
         ? null
-        : `pnpm ${versionText ?? 'unknown'} is installed, but this policy expects pnpm ${pnpmPolicy.requiredVersion}.`,
+        : buildPnpmRuntimePolicyMismatchMessage(versionText ?? 'unknown', pnpmPolicy),
   };
 }
 
@@ -365,6 +365,36 @@ function detectPnpmRuntimeVersion(requiredVersion: string): RuntimeDetection {
     available: false,
     warning: `pnpm is not installed on this machine. Install pnpm ${requiredVersion} to activate Fortress governance settings.`,
   };
+}
+
+function buildPnpmRuntimePolicyMismatchMessage(
+  installedVersion: string,
+  pnpmPolicy: GovernancePnpmPolicy,
+): string {
+  if (
+    pnpmPolicy.latestDeferredByMinimumReleaseAge
+    && pnpmPolicy.latestVersion
+    && pnpmPolicy.latestVersion !== pnpmPolicy.requiredVersion
+  ) {
+    return `pnpm ${installedVersion} is installed, but Fortress currently requires pnpm ${pnpmPolicy.requiredVersion}. The official latest release ${pnpmPolicy.latestVersion} is still inside the minimumReleaseAge window (published ${pnpmPolicy.latestPublishedAt ?? 'unknown'}, cutoff ${pnpmPolicy.releaseAgeCutoff ?? 'unknown'}).`;
+  }
+
+  return `pnpm ${installedVersion} is installed, but this policy expects pnpm ${pnpmPolicy.requiredVersion}.`;
+}
+
+function buildPnpmRequiredVersionMessage(
+  subject: 'packageManager' | 'devEngines.packageManager.version',
+  pnpmPolicy: GovernancePnpmPolicy,
+): string {
+  if (
+    pnpmPolicy.latestDeferredByMinimumReleaseAge
+    && pnpmPolicy.latestVersion
+    && pnpmPolicy.latestVersion !== pnpmPolicy.requiredVersion
+  ) {
+    return `${subject} must pin PNPM ${pnpmPolicy.requiredVersion} exactly. The official latest PNPM release ${pnpmPolicy.latestVersion} was published at ${pnpmPolicy.latestPublishedAt ?? 'unknown'} and is still newer than the minimumReleaseAge cutoff ${pnpmPolicy.releaseAgeCutoff ?? 'unknown'}.`;
+  }
+
+  return `${subject} must pin PNPM ${pnpmPolicy.requiredVersion} exactly.`;
 }
 
 function extractSemverFromText(text: string): string | null {
@@ -1104,7 +1134,7 @@ function auditPackageManagerField(
       property: 'packageManager',
       status: 'missing',
       expected: `pnpm@${pnpmPolicy.requiredVersion}`,
-      message: `packageManager must pin PNPM ${pnpmPolicy.requiredVersion} exactly.`,
+      message: buildPnpmRequiredVersionMessage('packageManager', pnpmPolicy),
     });
     return;
   }
@@ -1143,7 +1173,7 @@ function auditPackageManagerField(
       status: 'invalid',
       expected: `pnpm@${pnpmPolicy.requiredVersion}`,
       actual: rawValue,
-      message: `packageManager must pin PNPM ${pnpmPolicy.requiredVersion} exactly.`,
+      message: buildPnpmRequiredVersionMessage('packageManager', pnpmPolicy),
     });
     return;
   }
@@ -1152,7 +1182,7 @@ function auditPackageManagerField(
     file: PACKAGE_JSON_BASENAME,
     property: 'packageManager',
     status: 'ok',
-      expected: `pnpm@${pnpmPolicy.requiredVersion}`,
+    expected: `pnpm@${pnpmPolicy.requiredVersion}`,
     actual: rawValue,
     message: `packageManager pins ${rawValue}.`,
   });
@@ -1292,7 +1322,7 @@ function auditDevPackageManager(
       property: 'devEngines.packageManager.version',
       status: 'missing',
       expected: pnpmPolicy.requiredVersion,
-      message: `devEngines.packageManager.version must pin PNPM ${pnpmPolicy.requiredVersion} exactly.`,
+      message: buildPnpmRequiredVersionMessage('devEngines.packageManager.version', pnpmPolicy),
     });
   } else {
     const exactVersion = semver.valid(version);
@@ -1312,7 +1342,7 @@ function auditDevPackageManager(
         status: 'invalid',
         expected: pnpmPolicy.requiredVersion,
         actual: exactVersion,
-        message: `devEngines.packageManager.version must pin PNPM ${pnpmPolicy.requiredVersion} exactly.`,
+        message: buildPnpmRequiredVersionMessage('devEngines.packageManager.version', pnpmPolicy),
       });
     } else {
       pushCheck(checks, {

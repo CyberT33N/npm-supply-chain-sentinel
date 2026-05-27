@@ -4,7 +4,7 @@
   "description": "Cross-platform Node.js scanner for detecting documented npm supply-chain compromises, persistence artifacts, malicious install hooks, campaign IOCs, and PNPM 11 Fortress governance drift across projects or entire hosts.",
   "type": "module",
   "private": true,
-  "packageManager": "pnpm@11.2.2",
+  "packageManager": "pnpm@11.1.3",
   "bin": {
     "npm-supply-chain-sentinel": "./bin/npm-supply-chain-sentinel.js",
     "npm-supply-chain-sentinel-pnpm-governance": "./bin/npm-supply-chain-sentinel-pnpm-governance.js"
@@ -17,7 +17,7 @@
     },
     "packageManager": {
       "name": "pnpm",
-      "version": "11.2.2",
+      "version": "11.1.3",
       "onFail": "error"
     }
   },

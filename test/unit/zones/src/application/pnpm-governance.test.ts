@@ -316,6 +316,11 @@ describe('auditPnpmGovernance', () => {
         requiredVersion: '11.9.1',
         requiredMajor: 11,
         latestVersion: '11.9.1',
+        minimumReleaseAgeMinutes: 10080,
+        latestPublishedAt: '2026-05-12T08:00:00.000Z',
+        requiredPublishedAt: '2026-05-12T08:00:00.000Z',
+        releaseAgeCutoff: '2026-05-20T09:34:35.333Z',
+        latestDeferredByMinimumReleaseAge: false,
         checkedAt: '2026-05-27T09:00:00.000Z',
         source: 'https://registry.npmjs.org/pnpm',
         liveResolved: true,
@@ -339,6 +344,56 @@ describe('auditPnpmGovernance', () => {
     expect(getCheck(project, 'packageManager')?.expected).toBe('pnpm@11.9.1');
     expect(getCheck(project, 'devEngines.packageManager.version')?.status).toBe('invalid');
     expect(getCheck(project, 'devEngines.packageManager.version')?.expected).toBe('11.9.1');
+    expect(project.status).toBe('failed');
+  });
+
+  it('keeps the newest mature pnpm version as the required contract while latest is still blocked by minimumReleaseAge', async () => {
+    const rootPath = await createFixtureProject({
+      packageJson: createPackageJson({
+        packageManager: 'pnpm@11.3.0',
+        devEngines: {
+          packageManager: {
+            name: 'pnpm',
+            version: '11.3.0',
+            onFail: 'error',
+          },
+        },
+      }),
+    });
+    const pnpmPolicy = createGovernanceToolchainPolicy({
+      pnpm: {
+        requiredVersion: '11.2.2',
+        requiredMajor: 11,
+        latestVersion: '11.3.0',
+        minimumReleaseAgeMinutes: 10080,
+        latestPublishedAt: '2026-05-24T08:43:45.834Z',
+        requiredPublishedAt: '2026-05-19T08:43:45.834Z',
+        releaseAgeCutoff: '2026-05-20T09:34:35.333Z',
+        latestDeferredByMinimumReleaseAge: true,
+        checkedAt: '2026-05-27T09:34:35.333Z',
+        source: 'https://registry.npmjs.org/pnpm',
+        liveResolved: true,
+      },
+    });
+
+    const project = runAudit(rootPath, {
+      pnpmRuntime: createPnpmRuntime({
+        version: '11.2.2',
+        major: 11,
+        requiredVersion: '11.2.2',
+        requiredMajor: 11,
+        matchesRequiredVersion: true,
+        matchesRequiredMajor: true,
+        warning: null,
+      }),
+      toolchainPolicy: pnpmPolicy,
+    });
+
+    expect(getCheck(project, 'packageManager')?.status).toBe('invalid');
+    expect(getCheck(project, 'packageManager')?.message ?? '').toContain('official latest PNPM release 11.3.0');
+    expect(getCheck(project, 'packageManager')?.message ?? '').toContain('minimumReleaseAge cutoff 2026-05-20T09:34:35.333Z');
+    expect(getCheck(project, 'devEngines.packageManager.version')?.status).toBe('invalid');
+    expect(getCheck(project, 'devEngines.packageManager.version')?.message ?? '').toContain('official latest PNPM release 11.3.0');
     expect(project.status).toBe('failed');
   });
 

@@ -74,9 +74,20 @@ export function renderPnpmGovernanceAudit(governanceAudit: GovernanceAudit | nul
   console.log(`- Fortress failures: ${governanceAudit.summary.failCount}`);
   console.log(`- Governance warnings: ${governanceAudit.summary.warningCount}`);
   console.log(`- Required PNPM contract: ${governanceAudit.toolchainPolicy.pnpm.requiredVersion}`);
+  console.log(`- Official PNPM latest: ${governanceAudit.toolchainPolicy.pnpm.latestVersion ?? 'unavailable for this run'}`);
   console.log(`- Node LTS floor: ${governanceAudit.toolchainPolicy.node.minimumLtsVersion}`);
   console.log(`- Node latest guidance: ${governanceAudit.toolchainPolicy.node.latestVersion ?? 'unavailable for this run'}`);
   console.log('');
+
+  if (
+    governanceAudit.toolchainPolicy.pnpm.latestDeferredByMinimumReleaseAge
+    && governanceAudit.toolchainPolicy.pnpm.latestVersion
+  ) {
+    console.log(
+      `${colorize(STATUS_WARN_SYMBOL, 'yellow')} ${colorize(`PNPM ${governanceAudit.toolchainPolicy.pnpm.latestVersion} is newer than the configured minimumReleaseAge gate (${governanceAudit.toolchainPolicy.pnpm.minimumReleaseAgeMinutes} minutes). Fortress currently keeps ${governanceAudit.toolchainPolicy.pnpm.requiredVersion} as the newest allowed PNPM contract. Published=${governanceAudit.toolchainPolicy.pnpm.latestPublishedAt ?? 'unknown'} cutoff=${governanceAudit.toolchainPolicy.pnpm.releaseAgeCutoff ?? 'unknown'}.`, 'yellow')}`,
+    );
+    console.log('');
+  }
 
   if (governanceAudit.pnpmRuntime.warning) {
     console.log(

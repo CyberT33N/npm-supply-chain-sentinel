@@ -258,6 +258,40 @@ describe('renderPnpmGovernanceAudit', () => {
     expect(output).toContain('Upgrade package.json#devEngines.runtime.version and pnpm-workspace.yaml#nodeVersion together to 26.3.0.');
   });
 
+  it('renders the pnpm minimumReleaseAge gate when the official latest release is still too fresh', async () => {
+    const rootPath = await createFixtureProject();
+    const audit = auditPnpmGovernance(
+      [rootPath],
+      {},
+      PNPM_RUNTIME,
+      createGovernanceToolchainPolicy({
+        pnpm: {
+          requiredVersion: '11.2.2',
+          requiredMajor: 11,
+          latestVersion: '11.3.0',
+          minimumReleaseAgeMinutes: 10080,
+          latestPublishedAt: '2026-05-24T08:43:45.834Z',
+          requiredPublishedAt: '2026-05-19T08:43:45.834Z',
+          releaseAgeCutoff: '2026-05-20T09:34:35.333Z',
+          latestDeferredByMinimumReleaseAge: true,
+          checkedAt: '2026-05-27T09:34:35.333Z',
+          source: 'https://registry.npmjs.org/pnpm',
+          liveResolved: true,
+        },
+      }),
+    );
+
+    const output = withStdoutTty(true, () => captureConsoleOutput(() => {
+      renderPnpmGovernanceAudit(audit);
+    }));
+
+    expect(output).toContain('- Required PNPM contract: 11.2.2');
+    expect(output).toContain('- Official PNPM latest: 11.3.0');
+    expect(output).toContain('minimumReleaseAge gate (10080 minutes)');
+    expect(output).toContain('Fortress currently keeps 11.2.2 as the newest allowed PNPM contract.');
+    expect(output).toContain('Published=2026-05-24T08:43:45.834Z cutoff=2026-05-20T09:34:35.333Z');
+  });
+
   it('reports named catalog sections with exact versions in the successful green area', async () => {
     const rootPath = await createFixtureProject({
       workspaceText: BASE_WORKSPACE_TEXT.replace(
@@ -327,6 +361,7 @@ describe('renderPnpmGovernanceAudit', () => {
 
     expect(serialized?.summary.workspacePackageCount).toBe(2);
     expect(serialized?.toolchainPolicy.pnpm.requiredVersion).toBe('11.2.2');
+    expect(serialized?.toolchainPolicy.pnpm.minimumReleaseAgeMinutes).toBe(10080);
     expect(serialized?.toolchainPolicy.node.minimumLtsVersion).toBe('26.2.0');
     expect(payload.governance?.summary.workspacePackageCount).toBe(2);
     expect(payload.governance?.toolchainPolicy.pnpm.requiredVersion).toBe('11.2.2');
