@@ -1,3 +1,4 @@
+import path from 'node:path';
 import process from 'node:process';
 
 import type {
@@ -27,6 +28,21 @@ type RenderableGovernanceCheck = Pick<
   'actual' | 'expected' | 'file' | 'message' | 'presentationTone' | 'property'
 >;
 
+interface GovernanceCheckSummary {
+  okCount: number;
+  warningCount: number;
+  missingCount: number;
+  invalidCount: number;
+}
+
+interface WorkspacePackageReport {
+  checks: GovernanceCheck[];
+  displayPath: string;
+  packageName: string | null;
+  status: GovernanceProjectReport['status'];
+  summary: GovernanceCheckSummary;
+}
+
 function getPackageName(value: unknown): string | null {
   if (typeof value !== 'object' || value === null || !('name' in value)) {
     return null;
@@ -48,6 +64,7 @@ export function renderPnpmGovernanceAudit(governanceAudit: GovernanceAudit | nul
     console.log(`- Suppressed missing-ownership candidates: ${governanceAudit.discovery.suppressedMissingOwnershipCount}`);
   }
   console.log(`- Managed projects discovered: ${governanceAudit.summary.projectCount}`);
+  console.log(`- Workspace packages discovered: ${countWorkspacePackages(governanceAudit.projects)}`);
   console.log(`- PNPM projects: ${governanceAudit.summary.pnpmProjectCount}`);
   console.log(`- Standalone single-project PNPM roots: ${governanceAudit.summary.standalonePnpmSingleProjectCount}`);
   console.log(`- Monorepo roots: ${governanceAudit.summary.rootPnpmMonorepoCount}`);
@@ -79,13 +96,15 @@ export function renderPnpmGovernanceAudit(governanceAudit: GovernanceAudit | nul
 
   console.log('Managed project reports:');
   for (const project of governanceAudit.projects) {
+    const workspacePackageReports = buildWorkspacePackageReports(project);
+    const rootProjectChecks = excludeWorkspacePackageChecks(project.checks, workspacePackageReports);
     const { symbol, colorName, label } = statusPresentation(project.status);
     console.log(
       `${colorize(symbol, colorName)} ${colorize(formatProjectHeading(project), colorName)}`,
     );
     if (project.status === 'passed') {
-      const memberSuffix = project.workspaceMembers.length > 0
-        ? ` workspace_members=${project.workspaceMembers.length}`
+      const memberSuffix = workspacePackageReports.length > 0
+        ? ` workspace_packages=${workspacePackageReports.length}`
         : '';
       const governanceHighlights = summarizePassHighlights(project);
       const highlightSuffix = governanceHighlights.length > 0
@@ -94,17 +113,21 @@ export function renderPnpmGovernanceAudit(governanceAudit: GovernanceAudit | nul
       console.log(
         `  ${colorize('Fortress governance check passed.', 'green')} checks_ok=${project.summary.okCount}${memberSuffix}${highlightSuffix}`,
       );
+      renderWorkspacePackageSection(workspacePackageReports);
       continue;
     }
 
     console.log(
-      `  Status: ${label} ok=${project.summary.okCount} warnings=${project.summary.warningCount} missing=${project.summary.missingCount} invalid=${project.summary.invalidCount}`,
+      `  Status: ${label} ok=${project.summary.okCount} warnings=${project.summary.warningCount} missing=${project.summary.missingCount} invalid=${project.summary.invalidCount}${workspacePackageReports.length > 0 ? ` workspace_packages=${workspacePackageReports.length}` : ''}`,
     );
-    const okChecks = project.checks.filter((check) => check.status === 'ok');
-    const failedChecks = project.checks.filter((check) => check.status !== 'ok');
-    renderCheckSection('Successful checks:', okChecks, 'green', STATUS_OK_SYMBOL);
-    console.log('');
-    renderCheckSection('Failed checks:', failedChecks, 'red', STATUS_ERROR_SYMBOL);
+    if (rootProjectChecks.length > 0) {
+      const okChecks = rootProjectChecks.filter((check) => check.status === 'ok');
+      const failedChecks = rootProjectChecks.filter((check) => check.status !== 'ok');
+      renderCheckSection('Successful checks:', okChecks, 'green', STATUS_OK_SYMBOL);
+      console.log('');
+      renderCheckSection('Failed checks:', failedChecks, 'red', STATUS_ERROR_SYMBOL);
+    }
+    renderWorkspacePackageSection(workspacePackageReports);
   }
   console.log('');
 }
@@ -225,15 +248,18 @@ function renderCheckSection(
   checks: readonly GovernanceCheck[],
   colorName: 'green' | 'red',
   symbol: string,
+  indentSpaces = 2,
 ): void {
-  console.log(`  ${colorize(title, colorName)}`);
+  const headingIndent = ' '.repeat(indentSpaces);
+  const entryIndent = ' '.repeat(indentSpaces + 2);
+  console.log(`${headingIndent}${colorize(title, colorName)}`);
   for (const check of sortChecks(collapseChecksForDisplay(checks))) {
     const presentation = checkPresentation(check, colorName, symbol);
     const expectation = check.expected ? ` | expected=${check.expected}` : '';
     const actual = check.actual ? ` | actual=${check.actual}` : '';
     const details = `${check.property}: ${check.message}${expectation}${actual}`;
     console.log(
-      `    ${colorize(presentation.symbol, presentation.colorName)} ${colorize(details, presentation.colorName)}`,
+      `${entryIndent}${colorize(presentation.symbol, presentation.colorName)} ${colorize(details, presentation.colorName)}`,
     );
   }
 }
@@ -345,6 +371,139 @@ function summarizePassHighlights(project: GovernanceProjectReport): string[] {
   return highlights;
 }
 
+function countWorkspacePackages(projects: readonly GovernanceProjectReport[]): number {
+  const workspacePackageRoots = new Set<string>();
+  for (const project of projects) {
+    for (const workspaceMember of project.workspaceMembers) {
+      workspacePackageRoots.add(workspaceMember.rootPath);
+    }
+  }
+  return workspacePackageRoots.size;
+}
+
+function buildWorkspacePackageReports(
+  project: GovernanceProjectReport,
+): WorkspacePackageReport[] {
+  const workspacePackageReports: WorkspacePackageReport[] = [];
+  for (const workspaceMember of project.workspaceMembers) {
+    const memberChecks = project.checks.filter((check) => isCheckWithinWorkspaceMember(check, workspaceMember.rootPath));
+    if (memberChecks.length === 0) {
+      continue;
+    }
+    const relativePath = normalizeForDisplay(path.relative(project.rootPath, workspaceMember.rootPath));
+    const summary = summarizeChecks(memberChecks);
+    workspacePackageReports.push({
+      checks: memberChecks,
+      displayPath: relativePath || normalizeForDisplay(workspaceMember.rootPath),
+      packageName: getPackageName(workspaceMember.packageJson.value),
+      status: classifyWorkspacePackageStatus(summary),
+      summary,
+    });
+  }
+  return workspacePackageReports.sort((left, right) => left.displayPath.localeCompare(right.displayPath));
+}
+
+function excludeWorkspacePackageChecks(
+  checks: readonly GovernanceCheck[],
+  workspacePackageReports: readonly WorkspacePackageReport[],
+): GovernanceCheck[] {
+  const workspacePackageCheckKeys = new Set<string>();
+  for (const workspacePackageReport of workspacePackageReports) {
+    for (const check of workspacePackageReport.checks) {
+      workspacePackageCheckKeys.add(serializeCheckKey(check));
+    }
+  }
+  return checks.filter((check) => !workspacePackageCheckKeys.has(serializeCheckKey(check)));
+}
+
+function renderWorkspacePackageSection(
+  workspacePackageReports: readonly WorkspacePackageReport[],
+): void {
+  if (workspacePackageReports.length === 0) {
+    return;
+  }
+
+  console.log('');
+  console.log('  Workspace packages:');
+  for (const workspacePackageReport of workspacePackageReports) {
+    const { symbol, colorName, label } = statusPresentation(workspacePackageReport.status);
+    const packageLabel = workspacePackageReport.packageName
+      ? ` package=${workspacePackageReport.packageName}`
+      : '';
+    console.log(
+      `    ${colorize(symbol, colorName)} ${colorize(`${workspacePackageReport.displayPath} [workspace-package] status=${label} ok=${workspacePackageReport.summary.okCount} warnings=${workspacePackageReport.summary.warningCount} missing=${workspacePackageReport.summary.missingCount} invalid=${workspacePackageReport.summary.invalidCount}${packageLabel}`, colorName)}`,
+    );
+
+    const okChecks = workspacePackageReport.checks.filter((check) => check.status === 'ok');
+    const failedChecks = workspacePackageReport.checks.filter((check) => check.status !== 'ok');
+    if (okChecks.length > 0) {
+      renderCheckSection('Successful checks:', okChecks, 'green', STATUS_OK_SYMBOL, 6);
+    }
+    if (failedChecks.length > 0) {
+      if (okChecks.length > 0) {
+        console.log('');
+      }
+      renderCheckSection('Failed checks:', failedChecks, 'red', STATUS_ERROR_SYMBOL, 6);
+    }
+  }
+}
+
+function summarizeChecks(checks: readonly GovernanceCheck[]): GovernanceCheckSummary {
+  return checks.reduce<GovernanceCheckSummary>(
+    (summary, check) => {
+      if (check.status === 'ok') {
+        summary.okCount += 1;
+      } else if (check.status === 'warning') {
+        summary.warningCount += 1;
+      } else if (check.status === 'missing') {
+        summary.missingCount += 1;
+      } else if (check.status === 'invalid') {
+        summary.invalidCount += 1;
+      }
+      return summary;
+    },
+    {
+      okCount: 0,
+      warningCount: 0,
+      missingCount: 0,
+      invalidCount: 0,
+    },
+  );
+}
+
+function classifyWorkspacePackageStatus(
+  summary: GovernanceCheckSummary,
+): GovernanceProjectReport['status'] {
+  if (summary.invalidCount > 0 || summary.missingCount > 0) {
+    return 'failed';
+  }
+  if (summary.warningCount > 0) {
+    return 'warning';
+  }
+  return 'passed';
+}
+
+function isCheckWithinWorkspaceMember(check: GovernanceCheck, workspaceMemberRootPath: string): boolean {
+  if (!path.isAbsolute(check.file)) {
+    return false;
+  }
+  const relativePath = path.relative(workspaceMemberRootPath, check.file);
+  return relativePath === ''
+    || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
+
+function serializeCheckKey(check: GovernanceCheck): string {
+  return [
+    check.file,
+    check.property,
+    check.status,
+    check.presentationTone,
+    check.expected ?? '',
+    check.actual ?? '',
+    check.message,
+  ].join('\u0000');
+}
+
 function hasOkCheck(project: GovernanceProjectReport, property: string): boolean {
   return project.checks.some((check) => check.status === 'ok' && check.property === property);
 }
@@ -364,7 +523,9 @@ function formatProjectHeading(project: GovernanceProjectReport): string {
   const pathLabel = lineageDisplayPaths.join(' -> ');
   const kindLabel = project.topology?.role === 'nested-domain'
     ? `${project.classification.kind} domain`
-    : project.classification.kind;
+    : project.topology?.role === 'root'
+      ? `${project.classification.kind} root`
+      : project.classification.kind;
   return `${pathLabel} [${kindLabel}]`;
 }
 

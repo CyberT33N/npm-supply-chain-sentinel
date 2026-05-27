@@ -130,7 +130,7 @@ describe('renderPnpmGovernanceAudit', () => {
     );
   });
 
-  it('collapses repeated shared-catalog dependency checks across workspace manifests into one devDependencies line', async () => {
+  it('renders monorepo workspace packages as nested package reports and keeps catalog checks aggregated per package', async () => {
     const rootPath = await createFixtureProject({
       workspaceText: buildMonorepoWorkspaceText(
         BASE_WORKSPACE_TEXT.replace(/^saveExact: true\r?\n/mu, ''),
@@ -173,11 +173,16 @@ describe('renderPnpmGovernanceAudit', () => {
     const output = captureConsoleOutput(() => {
       renderPnpmGovernanceAudit(audit);
     });
-    const devDependencyLines = output.match(/^\s+✓ devDependencies:.*$/gmu) ?? [];
 
-    expect(devDependencyLines).toHaveLength(1);
-    expect(devDependencyLines[0]).toContain('ts-node');
-    expect(devDependencyLines[0]).toContain('tsx');
+    expect(output).toContain('- Workspace packages discovered: 3');
+    expect(output).toContain('[pnpm-monorepo root]');
+    expect(output).toContain('workspace_packages=3');
+    expect(output).toContain('Workspace packages:');
+    expect(output).toMatch(/packages[\\/]+fixture-a \[workspace-package\]/u);
+    expect(output).toMatch(/packages[\\/]+fixture-b \[workspace-package\]/u);
+    expect(output).toMatch(/packages[\\/]+fixture-c \[workspace-package\]/u);
+    const memberDevDependencyLines = output.match(/^\s+✓ devDependencies: .*ts-node.*tsx.*$/gmu) ?? [];
+    expect(memberDevDependencyLines).toHaveLength(3);
     expect(output).not.toMatch(/^\s+✓ devDependencies\.ts-node:/gmu);
     expect(output).not.toMatch(/^\s+✓ devDependencies\.tsx:/gmu);
   });
