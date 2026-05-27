@@ -185,6 +185,8 @@ describe('renderPnpmGovernanceAudit', () => {
     expect(output).toMatch(/packages[\\/]+fixture-a \[workspace-package\]/u);
     expect(output).toMatch(/packages[\\/]+fixture-b \[workspace-package\]/u);
     expect(output).toMatch(/packages[\\/]+fixture-c \[workspace-package\]/u);
+    const workspaceDividers = output.match(/^\s{4}-{20,}$/gmu) ?? [];
+    expect(workspaceDividers).toHaveLength(2);
     const memberDevDependencyLines = output.match(/^\s+✓ devDependencies: .*ts-node.*tsx.*$/gmu) ?? [];
     expect(memberDevDependencyLines).toHaveLength(3);
     expect(output).not.toMatch(/^\s+✓ devDependencies\.ts-node:/gmu);

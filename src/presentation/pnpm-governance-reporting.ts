@@ -446,7 +446,12 @@ function renderWorkspacePackageSection(
 
   console.log('');
   console.log('  Workspace packages:');
-  for (const workspacePackageReport of workspacePackageReports) {
+  for (const [index, workspacePackageReport] of workspacePackageReports.entries()) {
+    if (index > 0) {
+      console.log('');
+      console.log('    ------------------------------------------------------------');
+      console.log('');
+    }
     const { symbol, colorName, label } = statusPresentation(workspacePackageReport.status);
     const packageLabel = workspacePackageReport.packageName
       ? ` package=${workspacePackageReport.packageName}`
