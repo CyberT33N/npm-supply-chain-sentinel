@@ -142,28 +142,11 @@ export function serializeGovernanceAudit(governanceAudit: GovernanceAudit | null
     recommendedProperties: governanceAudit.recommendedProperties,
     pnpmRuntime: governanceAudit.pnpmRuntime,
     discovery: governanceAudit.discovery ?? null,
-    summary: governanceAudit.summary,
-    projects: governanceAudit.projects.map((project) => ({
-      rootPath: normalizeForDisplay(project.rootPath),
-      displayPath: project.displayPath,
-      status: project.status,
-      classification: project.classification,
-      topology: serializeProjectTopology(project.topology),
-      files: {
-        packageJson: project.files.packageJson ? normalizeForDisplay(project.files.packageJson) : null,
-        pnpmWorkspace: project.files.pnpmWorkspace ? normalizeForDisplay(project.files.pnpmWorkspace) : null,
-        pnpmLockfile: project.files.pnpmLockfile ? normalizeForDisplay(project.files.pnpmLockfile) : null,
-        npmrc: project.files.npmrc ? normalizeForDisplay(project.files.npmrc) : null,
-        authIni: project.files.authIni ? normalizeForDisplay(project.files.authIni) : null,
-        gitignore: project.files.gitignore ? normalizeForDisplay(project.files.gitignore) : null,
-      },
-      summary: project.summary,
-      workspaceMembers: project.workspaceMembers.map((member) => ({
-        rootPath: normalizeForDisplay(member.rootPath),
-        packageName: getPackageName(member.packageJson.value),
-      })),
-      checks: project.checks,
-    })),
+    summary: {
+      ...governanceAudit.summary,
+      workspacePackageCount: countWorkspacePackages(governanceAudit.projects),
+    },
+    projects: governanceAudit.projects.map((project) => serializeGovernanceProject(project)),
   };
 }
 
@@ -379,6 +362,44 @@ function countWorkspacePackages(projects: readonly GovernanceProjectReport[]): n
     }
   }
   return workspacePackageRoots.size;
+}
+
+function serializeGovernanceProject(project: GovernanceProjectReport) {
+  const workspacePackageReports = buildWorkspacePackageReports(project);
+  const rootChecks = excludeWorkspacePackageChecks(project.checks, workspacePackageReports);
+
+  return {
+    rootPath: normalizeForDisplay(project.rootPath),
+    displayPath: project.displayPath,
+    status: project.status,
+    classification: project.classification,
+    topology: serializeProjectTopology(project.topology),
+    files: {
+      packageJson: project.files.packageJson ? normalizeForDisplay(project.files.packageJson) : null,
+      pnpmWorkspace: project.files.pnpmWorkspace ? normalizeForDisplay(project.files.pnpmWorkspace) : null,
+      pnpmLockfile: project.files.pnpmLockfile ? normalizeForDisplay(project.files.pnpmLockfile) : null,
+      npmrc: project.files.npmrc ? normalizeForDisplay(project.files.npmrc) : null,
+      authIni: project.files.authIni ? normalizeForDisplay(project.files.authIni) : null,
+      gitignore: project.files.gitignore ? normalizeForDisplay(project.files.gitignore) : null,
+    },
+    summary: {
+      ...project.summary,
+      workspacePackageCount: workspacePackageReports.length,
+    },
+    workspaceMembers: project.workspaceMembers.map((member) => ({
+      rootPath: normalizeForDisplay(member.rootPath),
+      packageName: getPackageName(member.packageJson.value),
+    })),
+    checks: project.checks,
+    rootChecks,
+    workspacePackages: workspacePackageReports.map((workspacePackageReport) => ({
+      displayPath: workspacePackageReport.displayPath,
+      packageName: workspacePackageReport.packageName,
+      status: workspacePackageReport.status,
+      summary: workspacePackageReport.summary,
+      checks: workspacePackageReport.checks,
+    })),
+  };
 }
 
 function buildWorkspacePackageReports(

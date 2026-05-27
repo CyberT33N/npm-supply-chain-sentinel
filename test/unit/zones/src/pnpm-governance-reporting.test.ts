@@ -9,7 +9,11 @@ import {
   STATUS_OK_SYMBOL,
   STATUS_WARN_SYMBOL,
 } from '../../../../src/domain/policy';
-import { renderPnpmGovernanceAudit } from '../../../../src/presentation/pnpm-governance-reporting';
+import {
+  renderPnpmGovernanceAudit,
+  serializeGovernanceAudit,
+  toSerializablePnpmGovernanceResult,
+} from '../../../../src/presentation/pnpm-governance-reporting';
 import {
   BASE_WORKSPACE_TEXT,
   PNPM_RUNTIME,
@@ -232,5 +236,53 @@ describe('renderPnpmGovernanceAudit', () => {
     expect(output).toContain(
       'catalog_versions=exact',
     );
+  });
+
+  it('serializes workspace packages as first-class nested JSON structures', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: buildMonorepoWorkspaceText(
+        BASE_WORKSPACE_TEXT.replace(/^saveExact: true\r?\n/mu, ''),
+      ),
+      workspaceMembers: [
+        {
+          relativePath: 'packages/fixture-a',
+          packageJson: createPackageJson({
+            name: '@fixture/fixture-a',
+            devDependencies: {
+              'ts-node': 'catalog:',
+              tsx: 'catalog:',
+            },
+          }),
+        },
+        {
+          relativePath: 'packages/fixture-b',
+          packageJson: createPackageJson({
+            name: '@fixture/fixture-b',
+            devDependencies: {
+              'ts-node': 'catalog:',
+              tsx: 'catalog:',
+            },
+          }),
+        },
+      ],
+    });
+
+    const audit = auditPnpmGovernance([rootPath], {}, PNPM_RUNTIME);
+    const serialized = serializeGovernanceAudit(audit);
+    const payload = toSerializablePnpmGovernanceResult(audit, {
+      mode: 'project',
+      roots: [rootPath],
+    });
+    const project = serialized?.projects[0];
+
+    expect(serialized?.summary.workspacePackageCount).toBe(2);
+    expect(payload.governance?.summary.workspacePackageCount).toBe(2);
+    expect(project?.summary.workspacePackageCount).toBe(2);
+    expect(project?.rootChecks.some((check) => check.property === 'saveExact')).toBe(true);
+    expect(project?.workspacePackages).toHaveLength(2);
+    expect(project?.workspacePackages[0]?.displayPath).toMatch(/packages[\\/]+fixture-a|packages[\\/]+fixture-b/u);
+    expect(project?.workspacePackages.every((workspacePackage) => workspacePackage.status === 'passed')).toBe(true);
+    expect(project?.workspacePackages[0]?.checks.some((check) => check.property === 'devDependencies.ts-node')).toBe(true);
+    expect(project?.workspacePackages[0]?.checks.some((check) => check.property === 'saveExact')).toBe(false);
   });
 });
