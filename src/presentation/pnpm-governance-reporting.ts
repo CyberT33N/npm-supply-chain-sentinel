@@ -20,6 +20,13 @@ interface StandaloneGovernanceOptions {
   includeTrash?: boolean;
 }
 
+type CatalogDependencySection = 'dependencies' | 'devDependencies';
+
+type RenderableGovernanceCheck = Pick<
+  GovernanceCheck,
+  'actual' | 'expected' | 'file' | 'message' | 'presentationTone' | 'property'
+>;
+
 function getPackageName(value: unknown): string | null {
   if (typeof value !== 'object' || value === null || !('name' in value)) {
     return null;
@@ -93,8 +100,8 @@ export function renderPnpmGovernanceAudit(governanceAudit: GovernanceAudit | nul
     console.log(
       `  Status: ${label} ok=${project.summary.okCount} warnings=${project.summary.warningCount} missing=${project.summary.missingCount} invalid=${project.summary.invalidCount}`,
     );
-    const okChecks = sortChecks(project.checks.filter((check) => check.status === 'ok'));
-    const failedChecks = sortChecks(project.checks.filter((check) => check.status !== 'ok'));
+    const okChecks = project.checks.filter((check) => check.status === 'ok');
+    const failedChecks = project.checks.filter((check) => check.status !== 'ok');
     renderCheckSection('Successful checks:', okChecks, 'green', STATUS_OK_SYMBOL);
     console.log('');
     renderCheckSection('Failed checks:', failedChecks, 'red', STATUS_ERROR_SYMBOL);
@@ -197,7 +204,9 @@ function statusPresentation(status: GovernanceProjectReport['status']): {
   };
 }
 
-function sortChecks(checks: readonly GovernanceCheck[]): GovernanceCheck[] {
+function sortChecks<T extends Pick<GovernanceCheck, 'file' | 'message' | 'property'>>(
+  checks: readonly T[],
+): T[] {
   return [...checks].sort((left, right) => {
     const propertyComparison = left.property.localeCompare(right.property);
     if (propertyComparison !== 0) {
@@ -218,7 +227,7 @@ function renderCheckSection(
   symbol: string,
 ): void {
   console.log(`  ${colorize(title, colorName)}`);
-  for (const check of checks) {
+  for (const check of sortChecks(collapseChecksForDisplay(checks))) {
     const presentation = checkPresentation(check, colorName, symbol);
     const expectation = check.expected ? ` | expected=${check.expected}` : '';
     const actual = check.actual ? ` | actual=${check.actual}` : '';
@@ -230,7 +239,7 @@ function renderCheckSection(
 }
 
 function checkPresentation(
-  check: GovernanceCheck,
+  check: Pick<GovernanceCheck, 'presentationTone'>,
   fallbackColorName: 'green' | 'red',
   fallbackSymbol: string,
 ): {
@@ -246,6 +255,82 @@ function checkPresentation(
   return {
     colorName: fallbackColorName,
     symbol: fallbackSymbol,
+  };
+}
+
+function collapseChecksForDisplay(
+  checks: readonly GovernanceCheck[],
+): RenderableGovernanceCheck[] {
+  const retainedChecks: RenderableGovernanceCheck[] = [];
+  const aggregatedCatalogChecks = new Map<CatalogDependencySection, Set<string>>();
+
+  for (const check of checks) {
+    const catalogResolution = parseCatalogResolutionCheck(check);
+    if (!catalogResolution) {
+      retainedChecks.push(check);
+      continue;
+    }
+
+    const packageNames = aggregatedCatalogChecks.get(catalogResolution.section) ?? new Set<string>();
+    packageNames.add(catalogResolution.dependencyName);
+    aggregatedCatalogChecks.set(catalogResolution.section, packageNames);
+  }
+
+  for (const section of ['dependencies', 'devDependencies'] as const) {
+    const packageNames = aggregatedCatalogChecks.get(section);
+    if (!packageNames || packageNames.size === 0) {
+      continue;
+    }
+    retainedChecks.push(buildAggregatedCatalogCheck(section, packageNames));
+  }
+
+  return retainedChecks;
+}
+
+function parseCatalogResolutionCheck(
+  check: GovernanceCheck,
+): { dependencyName: string; section: CatalogDependencySection } | null {
+  if (check.expected !== 'catalog: reference') {
+    return null;
+  }
+  if (typeof check.actual !== 'string' || !check.actual.startsWith('catalog:')) {
+    return null;
+  }
+
+  const match = /^(dependencies|devDependencies)\.(.+)$/u.exec(check.property);
+  if (!match) {
+    return null;
+  }
+
+  const [, section, dependencyName] = match;
+  if (
+    (section !== 'dependencies' && section !== 'devDependencies')
+    || typeof dependencyName !== 'string'
+    || dependencyName.length === 0
+  ) {
+    return null;
+  }
+
+  return {
+    dependencyName,
+    section,
+  };
+}
+
+function buildAggregatedCatalogCheck(
+  section: CatalogDependencySection,
+  packageNames: ReadonlySet<string>,
+): RenderableGovernanceCheck {
+  const sortedPackageNames = [...packageNames].sort((left, right) => left.localeCompare(right));
+  const verb = sortedPackageNames.length === 1 ? 'delegates' : 'delegate';
+
+  return {
+    file: section,
+    property: section,
+    presentationTone: 'default',
+    expected: null,
+    actual: null,
+    message: `${sortedPackageNames.join(', ')} ${verb} version governance to the shared PNPM catalog via catalog: specifiers.`,
   };
 }
 

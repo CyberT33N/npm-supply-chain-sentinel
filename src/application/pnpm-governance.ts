@@ -59,6 +59,14 @@ type GovernanceProjectKind = 'node-project' | 'unknown' | 'pnpm-monorepo' | 'pnp
 type GovernanceRepoMode = 'single-project' | 'monorepo';
 type GovernanceProjectStatus = 'passed' | 'failed' | 'warning';
 
+interface ProjectAuthFileAuditTarget {
+  filePath: string;
+  inspectProperties: boolean;
+}
+
+const PROJECT_AUTH_LOCAL_POLICY_DRIFT_MESSAGE =
+  'Keeping repository policy inside a gitignored auth-local file creates hidden machine-local behavior and confusing install drift across developers and CI.';
+
 interface GovernanceOptions {
   mode?: ScanMode;
   includeTrash?: boolean;
@@ -157,6 +165,49 @@ interface GovernanceCheckInput {
   actual?: string | null;
   message: string;
 }
+
+const WORKSPACE_POLICY_SURFACES = new Map<string, string>(buildWorkspacePolicySurfaceEntries());
+const GLOBAL_PNPM_CONFIG_SURFACES = new Map<string, string>(buildNormalizedSurfaceEntries([
+  ['httpsProxy', 'httpsProxy'],
+  ['httpProxy', 'httpProxy'],
+  ['noProxy', 'noProxy'],
+  ['namedRegistries', 'namedRegistries'],
+  ['nodeDownloadMirrors', 'nodeDownloadMirrors'],
+  ['nodeMirror', 'nodeDownloadMirrors'],
+  ['npmrcAuthFile', 'npmrcAuthFile'],
+  ['localAddress', 'localAddress'],
+  ['storeDir', 'storeDir'],
+  ['cacheDir', 'cacheDir'],
+  ['stateDir', 'stateDir'],
+  ['sideEffectsCache', 'sideEffectsCache'],
+  ['sideEffectsCacheReadonly', 'sideEffectsCacheReadonly'],
+  ['supportedArchitectures', 'supportedArchitectures'],
+  ['ignoredOptionalDependencies', 'ignoredOptionalDependencies'],
+  ['configDependencies', 'configDependencies'],
+  ['requiredScripts', 'requiredScripts'],
+  ['tag', 'tag'],
+  ['maxsockets', 'maxsockets'],
+  ['networkConcurrency', 'networkConcurrency'],
+  ['fetchRetries', 'fetchRetries'],
+  ['fetchRetryFactor', 'fetchRetryFactor'],
+  ['fetchRetryMintimeout', 'fetchRetryMintimeout'],
+  ['fetchRetryMaxtimeout', 'fetchRetryMaxtimeout'],
+  ['fetchTimeout', 'fetchTimeout'],
+  ['fetchWarnTimeoutMs', 'fetchWarnTimeoutMs'],
+  ['fetchMinSpeedKiBps', 'fetchMinSpeedKiBps'],
+  ['shellEmulator', 'shellEmulator'],
+  ['optimisticRepeatInstall', 'optimisticRepeatInstall'],
+  ['modulesCacheMaxAge', 'modulesCacheMaxAge'],
+  ['dlxCacheMaxAge', 'dlxCacheMaxAge'],
+]));
+const PACKAGE_JSON_TOOLCHAIN_SURFACES = new Map<string, string>(buildNormalizedSurfaceEntries([
+  ['packageManager', 'packageManager'],
+  ['devEngines.runtime', 'devEngines.runtime'],
+  ['devEngines.runtime.version', 'devEngines.runtime.version'],
+  ['devEngines.packageManager', 'devEngines.packageManager'],
+  ['devEngines.packageManager.version', 'devEngines.packageManager.version'],
+  ['engines.node', 'engines.node'],
+]));
 
 export interface GovernanceProjectSummary {
   okCount: number;
@@ -718,7 +769,16 @@ function auditProjectRoot(
     auditRootPackageJson(checks, packageJson, classification, rootPath, workspaceMembers);
     auditRuntimeIdentityContract(checks, packageJson.value, workspaceConfig);
     auditLockfile(checks, pnpmLockfilePath);
-    auditProjectAuthFiles(checks, gitignorePath, [npmrcPath, authIniPath]);
+    auditProjectAuthFiles(checks, gitignorePath, [
+      {
+        filePath: npmrcPath,
+        inspectProperties: true,
+      },
+      {
+        filePath: authIniPath,
+        inspectProperties: false,
+      },
+    ]);
 
     if (classification.kind === 'pnpm-monorepo' && workspaceDocument.value) {
       auditWorkspaceMembers(checks, workspaceMembers);
@@ -1294,10 +1354,11 @@ function auditLockfile(checks: GovernanceCheck[], pnpmLockfilePath: string): voi
 function auditProjectAuthFiles(
   checks: GovernanceCheck[],
   gitignorePath: string,
-  authFilePaths: readonly string[],
+  authFiles: readonly ProjectAuthFileAuditTarget[],
 ): void {
   const gitignorePatterns = readGitignorePatterns(gitignorePath);
-  for (const authFilePath of authFilePaths) {
+  for (const authFile of authFiles) {
+    const authFilePath = authFile.filePath;
     if (!fileExists(authFilePath)) {
       pushCheck(checks, {
         file: path.basename(authFilePath),
@@ -1327,6 +1388,10 @@ function auditProjectAuthFiles(
       });
     }
 
+    if (!authFile.inspectProperties) {
+      continue;
+    }
+
     const parsedKeys = parseNpmrcKeys(authFilePath);
     if (parsedKeys.length === 0) {
       pushCheck(checks, {
@@ -1344,16 +1409,18 @@ function auditProjectAuthFiles(
           file: basename,
           property: key,
           status: 'invalid',
-          message: `${key} is not allowed in a project-local auth file. tokenHelper is user-local only.`,
+          message: `${key} is not allowed in a project-local .npmrc. tokenHelper is only permitted in the user-level .npmrc because a project-local helper path could execute arbitrary local binaries.`,
         });
         continue;
       }
       if (!isAllowedProjectNpmrcKey(key)) {
+        const migrationMessage = explainMisplacedProjectAuthSetting(key);
         pushCheck(checks, {
           file: basename,
           property: key,
           status: 'invalid',
-          message: `${key} is not an allowed project-local PNPM auth or certificate property.`,
+          message: migrationMessage
+            ?? `${key} is not an allowed project-local PNPM auth or certificate property. In PNPM 11, keep project-local .npmrc limited to auth and certificate material; move repository policy to pnpm-workspace.yaml and machine-local infrastructure settings to the global PNPM config.yaml instead.`,
         });
         continue;
       }
@@ -1375,6 +1442,42 @@ function auditProjectAuthFiles(
       message: `${GITIGNORE_BASENAME} is missing. Add .npmrc and auth.ini ignore rules if auth-local files are ever used.`,
     });
   }
+}
+
+function explainMisplacedProjectAuthSetting(rawKey: string): string | null {
+  if (rawKey === 'registry') {
+    return 'registry must not live in a project-local .npmrc. In Fortress mode, the approved default registry is a visible repository policy. Move it to pnpm-workspace.yaml#registries.default so every developer and CI runner resolves against the same reviewed origin instead of inheriting a hidden machine-local override.';
+  }
+
+  if (/^@[^:]+:registry$/u.test(rawKey)) {
+    return `${rawKey} must not live in a project-local .npmrc. Scoped registry topology is repository policy, not auth-local secret material. Move it to pnpm-workspace.yaml#registries so the scope-to-registry contract stays explicit and reviewable.`;
+  }
+
+  const normalizedKey = normalizeConfigKeyForLookup(rawKey);
+  if (normalizedKey === normalizeConfigKeyForLookup('useNodeVersion')) {
+    return 'useNodeVersion must not live in a project-local .npmrc. PNPM 11 removed useNodeVersion from .npmrc-based governance. Model the exact runtime contract in package.json#devEngines.runtime.version and keep pnpm-workspace.yaml#nodeVersion aligned with it instead.';
+  }
+
+  if (normalizedKey === normalizeConfigKeyForLookup('nodeVersion')) {
+    return `nodeVersion must not live in a project-local .npmrc. Move it to pnpm-workspace.yaml#nodeVersion and keep it aligned with package.json#devEngines.runtime.version. ${PROJECT_AUTH_LOCAL_POLICY_DRIFT_MESSAGE}`;
+  }
+
+  const packageJsonSurface = PACKAGE_JSON_TOOLCHAIN_SURFACES.get(normalizedKey);
+  if (packageJsonSurface) {
+    return `${rawKey} must not live in a project-local .npmrc. This toolchain contract belongs in package.json#${packageJsonSurface}, not in an auth-local secret file. ${PROJECT_AUTH_LOCAL_POLICY_DRIFT_MESSAGE}`;
+  }
+
+  const workspaceSurface = WORKSPACE_POLICY_SURFACES.get(normalizedKey);
+  if (workspaceSurface) {
+    return `${rawKey} must not live in a project-local .npmrc. Move it to pnpm-workspace.yaml#${workspaceSurface}. ${PROJECT_AUTH_LOCAL_POLICY_DRIFT_MESSAGE}`;
+  }
+
+  const globalConfigSurface = GLOBAL_PNPM_CONFIG_SURFACES.get(normalizedKey);
+  if (globalConfigSurface) {
+    return `${rawKey} must not live in a project-local .npmrc. This setting is infrastructure- or machine-local rather than repository auth material. Move it to the global PNPM config.yaml#${globalConfigSurface} (or equivalent runner/user provisioning) instead.`;
+  }
+
+  return null;
 }
 
 function auditWorkspaceMembers(
@@ -1501,7 +1604,7 @@ function auditCatalogDependencyUsage(
           status: 'ok',
           expected: 'catalog: reference',
           actual: specifier,
-          message: `${dependencyName} was scanned and resolves through the shared catalog.`,
+          message: `${dependencyName} delegates version governance to a shared PNPM catalog reference.`,
         });
         continue;
       }
@@ -1673,6 +1776,35 @@ function parseNpmrcKeys(filePath: string): Array<{ key: string }> {
       };
     })
     .filter((entry) => entry.key);
+}
+
+function buildWorkspacePolicySurfaceEntries(): Array<[string, string]> {
+  const propertyPaths = new Set<string>([
+    ...SHARED_WORKSPACE_EXACT_RULES.map(([property]) => String(property)),
+    ...SHARED_WORKSPACE_EMPTY_ARRAY_RULES,
+    ...SHARED_WORKSPACE_EMPTY_OBJECT_RULES,
+    ...SHARED_WORKSPACE_OBJECT_RULES,
+    ...MONOREPO_WORKSPACE_EXACT_RULES.map(([property]) => String(property)),
+    ...MONOREPO_WORKSPACE_ARRAY_RULES,
+    ...SINGLE_PROJECT_FORBIDDEN_WORKSPACE_RULES,
+    ...SECURITY_EXCEPTION_WORKSPACE_RULES,
+    'catalogs',
+    'registries.default',
+  ]);
+
+  return [...propertyPaths]
+    .sort((left, right) => left.localeCompare(right))
+    .map((propertyPath) => [normalizeConfigKeyForLookup(propertyPath), propertyPath] as [string, string]);
+}
+
+function buildNormalizedSurfaceEntries(
+  entries: ReadonlyArray<readonly [string, string]>,
+): Array<[string, string]> {
+  return entries.map(([key, surface]) => [normalizeConfigKeyForLookup(key), surface] as [string, string]);
+}
+
+function normalizeConfigKeyForLookup(rawKey: string): string {
+  return String(rawKey).replace(/[^a-z0-9]/giu, '').toLowerCase();
 }
 
 function auditNumericMinimum(

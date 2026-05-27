@@ -13,8 +13,10 @@ import { renderPnpmGovernanceAudit } from '../../../../src/presentation/pnpm-gov
 import {
   BASE_WORKSPACE_TEXT,
   PNPM_RUNTIME,
+  buildMonorepoWorkspaceText,
   captureConsoleOutput,
   createFixtureProject,
+  createPackageJson,
 } from '@test/shared/utils/pnpm-governance-fixtures';
 
 function withStdoutTty<T>(value: boolean, action: () => T): T {
@@ -81,15 +83,25 @@ describe('renderPnpmGovernanceAudit', () => {
       return match?.[1] ?? null;
     });
 
-    expect(successfulLines.length).toBe(successfulProperties.length);
+    expect(successfulLines.length).toBeLessThan(successfulProperties.length);
     expect(failedLines.length).toBe(failedProperties.length);
     expect(successfulLines.every((line) => line.startsWith(`    ${STATUS_OK_SYMBOL} `))).toBe(true);
     expect(failedLines.every((line) => line.startsWith(`    ${STATUS_ERROR_SYMBOL} `))).toBe(true);
-    expect(renderedSuccessfulProperties).toEqual(successfulProperties);
-    expect(renderedFailedProperties).toEqual(failedProperties);
-    expect(output).toContain(
-      'dependencies.minimatch: minimatch was scanned and resolves through the shared catalog. | expected=catalog: reference | actual=catalog:',
+    expect(renderedSuccessfulProperties).toEqual(
+      [...renderedSuccessfulProperties].toSorted((left, right) =>
+        String(left).localeCompare(String(right)),
+      ),
     );
+    expect(renderedFailedProperties).toEqual(failedProperties);
+    expect(output.match(/^\s+✓ dependencies:/gmu) ?? []).toHaveLength(1);
+    expect(output.match(/^\s+✓ devDependencies:/gmu) ?? []).toHaveLength(1);
+    expect(output).toMatch(/^\s+✓ dependencies: .*minimatch.*$/mu);
+    expect(output).toMatch(/^\s+✓ devDependencies: .*vitest.*$/mu);
+    expect(output).toContain(
+      'delegate version governance to the shared PNPM catalog via catalog: specifiers.',
+    );
+    expect(output).not.toContain('dependencies.minimatch: minimatch was scanned and resolves through the shared catalog.');
+    expect(output).not.toContain('was scanned');
     expect(output).toContain(
       'devEngines.runtime.version = nodeVersion: devEngines.runtime.version and pnpm-workspace.yaml#nodeVersion are aligned on 26.2.0. | expected=same exact semver in package.json and pnpm-workspace.yaml | actual=26.2.0',
     );
@@ -116,6 +128,58 @@ describe('renderPnpmGovernanceAudit', () => {
     expect(output).toContain(
       `    ${ANSI_COLORS.red}${STATUS_ERROR_SYMBOL}${ANSI_COLORS.reset} ${ANSI_COLORS.red}saveExact:`,
     );
+  });
+
+  it('collapses repeated shared-catalog dependency checks across workspace manifests into one devDependencies line', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: buildMonorepoWorkspaceText(
+        BASE_WORKSPACE_TEXT.replace(/^saveExact: true\r?\n/mu, ''),
+      ),
+      workspaceMembers: [
+        {
+          relativePath: 'packages/fixture-a',
+          packageJson: createPackageJson({
+            name: '@fixture/fixture-a',
+            devDependencies: {
+              'ts-node': 'catalog:',
+              tsx: 'catalog:',
+            },
+          }),
+        },
+        {
+          relativePath: 'packages/fixture-b',
+          packageJson: createPackageJson({
+            name: '@fixture/fixture-b',
+            devDependencies: {
+              'ts-node': 'catalog:',
+              tsx: 'catalog:',
+            },
+          }),
+        },
+        {
+          relativePath: 'packages/fixture-c',
+          packageJson: createPackageJson({
+            name: '@fixture/fixture-c',
+            devDependencies: {
+              'ts-node': 'catalog:',
+              tsx: 'catalog:',
+            },
+          }),
+        },
+      ],
+    });
+
+    const audit = auditPnpmGovernance([rootPath], {}, PNPM_RUNTIME);
+    const output = captureConsoleOutput(() => {
+      renderPnpmGovernanceAudit(audit);
+    });
+    const devDependencyLines = output.match(/^\s+✓ devDependencies:.*$/gmu) ?? [];
+
+    expect(devDependencyLines).toHaveLength(1);
+    expect(devDependencyLines[0]).toContain('ts-node');
+    expect(devDependencyLines[0]).toContain('tsx');
+    expect(output).not.toMatch(/^\s+✓ devDependencies\.ts-node:/gmu);
+    expect(output).not.toMatch(/^\s+✓ devDependencies\.tsx:/gmu);
   });
 
   it('renders failing fortress exception surfaces in yellow while the audit remains in the failed red area', async () => {

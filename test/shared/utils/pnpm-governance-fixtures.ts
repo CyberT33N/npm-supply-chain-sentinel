@@ -26,6 +26,9 @@ export interface FixtureProjectOptions {
   packageJson?: JsonObject;
   workspaceText?: string;
   workspaceMembers?: readonly FixtureWorkspaceMember[];
+  gitignoreText?: string;
+  npmrcText?: string;
+  authIniText?: string;
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
@@ -90,7 +93,16 @@ export async function createFixtureProject(
     options.workspaceText ?? BASE_WORKSPACE_TEXT,
   );
   await writeFile(path.join(fixtureRoot, 'pnpm-lock.yaml'), 'lockfileVersion: "9.0"\n');
-  await writeFile(path.join(fixtureRoot, '.gitignore'), '.npmrc\nauth.ini\n');
+  await writeFile(
+    path.join(fixtureRoot, '.gitignore'),
+    options.gitignoreText ?? '.npmrc\nauth.ini\n',
+  );
+  if (options.npmrcText !== undefined) {
+    await writeFile(path.join(fixtureRoot, '.npmrc'), options.npmrcText);
+  }
+  if (options.authIniText !== undefined) {
+    await writeFile(path.join(fixtureRoot, 'auth.ini'), options.authIniText);
+  }
 
   for (const member of options.workspaceMembers ?? []) {
     const memberRoot = path.join(fixtureRoot, member.relativePath);

@@ -26,8 +26,12 @@ describe('auditPnpmGovernance', () => {
     expect(getCheck(project, 'catalog exact versions')?.status).toBe('ok');
     expect(getCheck(project, 'dependencies.minimatch')?.status).toBe('ok');
     expect(getCheck(project, 'dependencies.minimatch')?.actual).toBe('catalog:');
+    expect(getCheck(project, 'dependencies.minimatch')?.message ?? '').toMatch(/delegates version governance/i);
+    expect(getCheck(project, 'dependencies.minimatch')?.message ?? '').not.toMatch(/scanned/i);
     expect(getCheck(project, 'devDependencies.vitest')?.status).toBe('ok');
     expect(getCheck(project, 'devDependencies.vitest')?.actual).toBe('catalog:');
+    expect(getCheck(project, 'devDependencies.vitest')?.message ?? '').toMatch(/delegates version governance/i);
+    expect(getCheck(project, 'devDependencies.vitest')?.message ?? '').not.toMatch(/scanned/i);
   });
 
   it('rejects hardcoded dependency versions that are not migrated to the catalog', async () => {
@@ -241,5 +245,65 @@ describe('auditPnpmGovernance', () => {
     expect(memberCheck?.status).toBe('invalid');
     expect(memberCheck?.actual).toBe('10.2.5');
     expect(memberCheck?.message ?? '').toMatch(/catalog/i);
+  });
+
+  it('keeps an empty project-local .npmrc as a gitignored auth-local surface', async () => {
+    const rootPath = await createFixtureProject({
+      npmrcText: '',
+    });
+
+    const project = runAudit(rootPath);
+
+    expect(getCheck(project, '.npmrc gitignore')?.status).toBe('ok');
+    expect(getCheck(project, '.npmrc')?.status).toBe('ok');
+    expect(getCheck(project, '.npmrc')?.message ?? '').toMatch(/does not contain active config keys/i);
+  });
+
+  it('reports repo-policy settings in .npmrc as migrations to pnpm-workspace.yaml', async () => {
+    const rootPath = await createFixtureProject({
+      npmrcText: [
+        'save-exact=true',
+        'strict-ssl=true',
+        'registry=https://registry.corp.example/npm/',
+        '',
+      ].join('\n'),
+    });
+
+    const project = runAudit(rootPath);
+
+    expect(getCheck(project, 'save-exact')?.status).toBe('invalid');
+    expect(getCheck(project, 'save-exact')?.message ?? '').toContain('pnpm-workspace.yaml#saveExact');
+    expect(getCheck(project, 'strict-ssl')?.status).toBe('invalid');
+    expect(getCheck(project, 'strict-ssl')?.message ?? '').toContain('pnpm-workspace.yaml#strictSsl');
+    expect(getCheck(project, 'registry')?.status).toBe('invalid');
+    expect(getCheck(project, 'registry')?.message ?? '').toContain('pnpm-workspace.yaml#registries.default');
+  });
+
+  it('reports legacy runtime settings in .npmrc as migrations to the package and workspace contracts', async () => {
+    const rootPath = await createFixtureProject({
+      npmrcText: 'use-node-version=26.2.0\n',
+    });
+
+    const project = runAudit(rootPath);
+    const runtimeCheck = getCheck(project, 'use-node-version');
+
+    expect(runtimeCheck?.status).toBe('invalid');
+    expect(runtimeCheck?.message ?? '').toContain('package.json#devEngines.runtime.version');
+    expect(runtimeCheck?.message ?? '').toContain('pnpm-workspace.yaml#nodeVersion');
+  });
+
+  it('limits auth.ini auditing to gitignore governance', async () => {
+    const rootPath = await createFixtureProject({
+      authIniText: '//registry.corp.example/:_authToken=${NPM_TOKEN}\n',
+    });
+
+    const project = runAudit(rootPath);
+    const authIniPropertyCheck = project.checks.find((check) =>
+      check.file === 'auth.ini'
+      && check.property === '//registry.corp.example/:_authToken'
+    );
+
+    expect(getCheck(project, 'auth.ini gitignore')?.status).toBe('ok');
+    expect(authIniPropertyCheck).toBeUndefined();
   });
 });
