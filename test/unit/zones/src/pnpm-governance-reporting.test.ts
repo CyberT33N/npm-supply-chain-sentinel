@@ -236,6 +236,15 @@ describe('renderPnpmGovernanceAudit', () => {
       'Fortress governance check passed.',
     );
     expect(output).toContain(
+      '  Successful checks:',
+    );
+    expect(output).not.toContain(
+      '  Failed checks:',
+    );
+    expect(output).toContain(
+      'catalogs.ui exact versions: catalogs.ui entries are present and pinned to explicit exact semver versions only.',
+    );
+    expect(output).toContain(
       'catalog_versions=exact',
     );
   });

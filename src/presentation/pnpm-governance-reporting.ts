@@ -113,6 +113,10 @@ export function renderPnpmGovernanceAudit(governanceAudit: GovernanceAudit | nul
       console.log(
         `  ${colorize('Fortress governance check passed.', 'green')} checks_ok=${project.summary.okCount}${memberSuffix}${highlightSuffix}`,
       );
+      if (rootProjectChecks.length > 0) {
+        console.log('');
+        renderCheckSection('Successful checks:', rootProjectChecks, 'green', STATUS_OK_SYMBOL);
+      }
       renderWorkspacePackageSection(workspacePackageReports);
       continue;
     }
