@@ -17,6 +17,7 @@ import {
   writeBlocklists,
 } from '../infrastructure/remediation';
 import { ensureRipgrepInstalled } from '../infrastructure/ripgrep';
+import { resolveGovernanceToolchainPolicy } from '../infrastructure/toolchain-version-contracts';
 import {
   LATEST_FULL_SCAN_REPORT_BASENAME,
   resolveGeneratedReportPath,
@@ -106,7 +107,8 @@ export async function main() {
     process.exitCode = 2;
     return;
   }
-  const pnpmRuntime = inspectPnpmRuntime();
+  const toolchainPolicy = await resolveGovernanceToolchainPolicy();
+  const pnpmRuntime = inspectPnpmRuntime(toolchainPolicy.pnpm);
 
   const findings = createFindingsContainer();
   logStageIfVerbose(stageLogger, args, 'preflight-started', 'Resolving scan scope and runtime dependencies');
@@ -158,7 +160,7 @@ export async function main() {
   logStageIfVerbose(stageLogger, args, 'registry-audit-complete', 'Finished inspecting platform-specific registry/runtime persistence');
 
   logStageIfVerbose(stageLogger, args, 'pnpm-governance-started', 'Auditing managed project roots for PNPM 11 Fortress governance');
-  const governanceAudit = auditPnpmGovernance(normalizedRoots, args, pnpmRuntime);
+  const governanceAudit = auditPnpmGovernance(normalizedRoots, args, pnpmRuntime, toolchainPolicy);
   logStageIfVerbose(
     stageLogger,
     args,

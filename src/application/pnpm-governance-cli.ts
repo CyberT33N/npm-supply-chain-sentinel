@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { SCAN_MODE_MACHINE, SCAN_MODE_PROJECT } from '../domain/policy';
 import { detectProjectRoot, normalizeForDisplay, toAbsolutePath } from '../infrastructure/fs-utils';
+import { resolveGovernanceToolchainPolicy } from '../infrastructure/toolchain-version-contracts';
 import {
   LATEST_PNPM_GOVERNANCE_REPORT_BASENAME,
   resolveGeneratedReportPath,
@@ -52,8 +53,9 @@ export async function main() {
   }
 
   args.roots = resolveRoots(args);
-  const pnpmRuntime = inspectPnpmRuntime();
-  const governanceAudit = auditPnpmGovernance(args.roots, args, pnpmRuntime);
+  const toolchainPolicy = await resolveGovernanceToolchainPolicy();
+  const pnpmRuntime = inspectPnpmRuntime(toolchainPolicy.pnpm);
+  const governanceAudit = auditPnpmGovernance(args.roots, args, pnpmRuntime, toolchainPolicy);
 
   renderStandaloneGovernanceSummary(args, governanceAudit);
 

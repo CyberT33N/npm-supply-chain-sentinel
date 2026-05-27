@@ -1,8 +1,43 @@
-export const CURRENT_NODE_LTS = Object.freeze({
+export interface NodeRuntimeContract {
+  version: string;
+  major: number;
+  checkedAt: string;
+  source: string;
+}
+
+export interface GovernancePnpmPolicy {
+  requiredVersion: string;
+  requiredMajor: number;
+  latestVersion: string | null;
+  checkedAt: string;
+  source: string;
+  liveResolved: boolean;
+}
+
+export interface GovernanceNodePolicy {
+  minimumLtsVersion: string;
+  minimumLtsMajor: number;
+  latestVersion: string | null;
+  latestMajor: number | null;
+  checkedAt: string;
+  source: string;
+  ltsCodename: string | null;
+  liveResolved: boolean;
+}
+
+export interface GovernanceToolchainPolicy {
+  pnpm: GovernancePnpmPolicy;
+  node: GovernanceNodePolicy;
+  warnings: string[];
+}
+
+const REFERENCE_TOOLCHAIN_SOURCE = 'TS_PACKAGE_MANAGER_PNPM_WORKSPACE_FORTRESS_CORE_REFERENCE_001.mdc';
+
+export const CURRENT_NODE_LTS: NodeRuntimeContract = Object.freeze({
   version: '26.2.0',
   major: 26,
   checkedAt: '2026-05-26',
-  source: 'TS_PACKAGE_MANAGER_PNPM_WORKSPACE_FORTRESS_CORE_REFERENCE_001.mdc',
+  source: REFERENCE_TOOLCHAIN_SOURCE,
 });
 
 export const REQUIRED_PNPM_MAJOR = 11;
@@ -372,4 +407,28 @@ export function isFortressExceptionSurfaceRule(property: string): boolean {
 export function isForbiddenProjectTokenHelperKey(rawKey: string): boolean {
   const key = String(rawKey).trim();
   return key === 'tokenHelper' || /[:/]tokenHelper$/u.test(key);
+}
+
+export function createReferenceGovernanceToolchainPolicy(): GovernanceToolchainPolicy {
+  return {
+    pnpm: {
+      requiredVersion: REQUIRED_PNPM_VERSION,
+      requiredMajor: REQUIRED_PNPM_MAJOR,
+      latestVersion: null,
+      checkedAt: CURRENT_NODE_LTS.checkedAt,
+      source: REFERENCE_TOOLCHAIN_SOURCE,
+      liveResolved: false,
+    },
+    node: {
+      minimumLtsVersion: CURRENT_NODE_LTS.version,
+      minimumLtsMajor: CURRENT_NODE_LTS.major,
+      latestVersion: null,
+      latestMajor: null,
+      checkedAt: CURRENT_NODE_LTS.checkedAt,
+      source: CURRENT_NODE_LTS.source,
+      ltsCodename: null,
+      liveResolved: false,
+    },
+    warnings: [],
+  };
 }

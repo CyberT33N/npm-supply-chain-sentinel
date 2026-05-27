@@ -11,6 +11,12 @@ import {
   type GovernanceProjectReport,
   type PnpmRuntimeInfo,
 } from '../../../src/application/pnpm-governance';
+import {
+  createReferenceGovernanceToolchainPolicy,
+  type GovernanceNodePolicy,
+  type GovernancePnpmPolicy,
+  type GovernanceToolchainPolicy,
+} from '../../../src/domain/pnpm-governance';
 
 type JsonObject = Record<string, unknown>;
 
@@ -74,6 +80,38 @@ export const PNPM_RUNTIME: PnpmRuntimeInfo = Object.freeze({
   matchesRequiredVersion: true,
   warning: null,
 });
+
+export const GOVERNANCE_TOOLCHAIN_POLICY: GovernanceToolchainPolicy = Object.freeze(
+  createReferenceGovernanceToolchainPolicy(),
+);
+
+export function createGovernanceToolchainPolicy(
+  overrides: {
+    pnpm?: Partial<GovernancePnpmPolicy>;
+    node?: Partial<GovernanceNodePolicy>;
+    warnings?: string[];
+  } = {},
+): GovernanceToolchainPolicy {
+  const referencePolicy = createReferenceGovernanceToolchainPolicy();
+  return {
+    pnpm: {
+      ...referencePolicy.pnpm,
+      ...(overrides.pnpm ?? {}),
+    },
+    node: {
+      ...referencePolicy.node,
+      ...(overrides.node ?? {}),
+    },
+    warnings: [...(overrides.warnings ?? referencePolicy.warnings)],
+  };
+}
+
+export function createPnpmRuntime(overrides: Partial<PnpmRuntimeInfo> = {}): PnpmRuntimeInfo {
+  return {
+    ...PNPM_RUNTIME,
+    ...overrides,
+  };
+}
 
 export async function createFixtureProject(
   options: FixtureProjectOptions = {},
@@ -187,8 +225,19 @@ export function createPackageJson(overrides: JsonObject = {}): JsonObject {
   };
 }
 
-export function runAudit(rootPath: string): GovernanceProjectReport {
-  const audit = auditPnpmGovernance([rootPath], {}, PNPM_RUNTIME);
+export function runAudit(
+  rootPath: string,
+  options: {
+    pnpmRuntime?: PnpmRuntimeInfo;
+    toolchainPolicy?: GovernanceToolchainPolicy;
+  } = {},
+): GovernanceProjectReport {
+  const audit = auditPnpmGovernance(
+    [rootPath],
+    {},
+    options.pnpmRuntime ?? PNPM_RUNTIME,
+    options.toolchainPolicy ?? GOVERNANCE_TOOLCHAIN_POLICY,
+  );
 
   if (audit.projects.length !== 1) {
     throw new Error(`Expected exactly one audited project, received ${audit.projects.length}.`);

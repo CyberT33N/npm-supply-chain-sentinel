@@ -19,6 +19,7 @@ import {
   PNPM_RUNTIME,
   buildMonorepoWorkspaceText,
   captureConsoleOutput,
+  createGovernanceToolchainPolicy,
   createFixtureProject,
   createPackageJson,
 } from '@test/shared/utils/pnpm-governance-fixtures';
@@ -219,6 +220,44 @@ describe('renderPnpmGovernanceAudit', () => {
     );
   });
 
+  it('renders node latest recommendations in a dedicated yellow warning section', async () => {
+    const rootPath = await createFixtureProject();
+    const audit = auditPnpmGovernance(
+      [rootPath],
+      {},
+      PNPM_RUNTIME,
+      createGovernanceToolchainPolicy({
+        node: {
+          minimumLtsVersion: '26.0.0',
+          minimumLtsMajor: 26,
+          latestVersion: '26.3.0',
+          latestMajor: 26,
+          checkedAt: '2026-05-27T09:00:00.000Z',
+          source: 'https://nodejs.org/dist/index.json',
+          ltsCodename: 'Krypton',
+          liveResolved: true,
+        },
+      }),
+    );
+    const [project] = audit.projects;
+    if (!project) {
+      throw new Error('Expected an audited project to be present.');
+    }
+
+    expect(project.status).toBe('warning');
+
+    const output = withStdoutTty(true, () => captureConsoleOutput(() => {
+      renderPnpmGovernanceAudit(audit);
+    }));
+
+    expect(output).toContain(`  ${ANSI_COLORS.yellow}Warning checks:${ANSI_COLORS.reset}`);
+    expect(output).not.toContain(`  ${ANSI_COLORS.red}Failed checks:${ANSI_COLORS.reset}`);
+    expect(output).toContain(
+      `    ${ANSI_COLORS.yellow}${STATUS_WARN_SYMBOL}${ANSI_COLORS.reset} ${ANSI_COLORS.yellow}runtime contract = current Node latest:`,
+    );
+    expect(output).toContain('Upgrade package.json#devEngines.runtime.version and pnpm-workspace.yaml#nodeVersion together to 26.3.0.');
+  });
+
   it('reports named catalog sections with exact versions in the successful green area', async () => {
     const rootPath = await createFixtureProject({
       workspaceText: BASE_WORKSPACE_TEXT.replace(
@@ -287,7 +326,10 @@ describe('renderPnpmGovernanceAudit', () => {
     const project = serialized?.projects[0];
 
     expect(serialized?.summary.workspacePackageCount).toBe(2);
+    expect(serialized?.toolchainPolicy.pnpm.requiredVersion).toBe('11.2.2');
+    expect(serialized?.toolchainPolicy.node.minimumLtsVersion).toBe('26.2.0');
     expect(payload.governance?.summary.workspacePackageCount).toBe(2);
+    expect(payload.governance?.toolchainPolicy.pnpm.requiredVersion).toBe('11.2.2');
     expect(project?.summary.workspacePackageCount).toBe(2);
     expect(project?.rootChecks.some((check) => check.property === 'saveExact')).toBe(true);
     expect(project?.workspacePackages).toHaveLength(2);

@@ -7,8 +7,10 @@ import {
   BASE_WORKSPACE_TEXT,
   PNPM_RUNTIME,
   buildMonorepoWorkspaceText,
+  createGovernanceToolchainPolicy,
   createFixtureProject,
   createPackageJson,
+  createPnpmRuntime,
   getCheck,
   runAudit,
 } from '@test/shared/utils/pnpm-governance-fixtures';
@@ -305,5 +307,109 @@ describe('auditPnpmGovernance', () => {
 
     expect(getCheck(project, 'auth.ini gitignore')?.status).toBe('ok');
     expect(authIniPropertyCheck).toBeUndefined();
+  });
+
+  it('requires the dynamically resolved pnpm latest version on both package-manager contracts', async () => {
+    const rootPath = await createFixtureProject();
+    const toolchainPolicy = createGovernanceToolchainPolicy({
+      pnpm: {
+        requiredVersion: '11.9.1',
+        requiredMajor: 11,
+        latestVersion: '11.9.1',
+        checkedAt: '2026-05-27T09:00:00.000Z',
+        source: 'https://registry.npmjs.org/pnpm',
+        liveResolved: true,
+      },
+    });
+
+    const project = runAudit(rootPath, {
+      pnpmRuntime: createPnpmRuntime({
+        version: '11.9.1',
+        major: 11,
+        requiredVersion: '11.9.1',
+        requiredMajor: 11,
+        matchesRequiredVersion: true,
+        matchesRequiredMajor: true,
+        warning: null,
+      }),
+      toolchainPolicy,
+    });
+
+    expect(getCheck(project, 'packageManager')?.status).toBe('invalid');
+    expect(getCheck(project, 'packageManager')?.expected).toBe('pnpm@11.9.1');
+    expect(getCheck(project, 'devEngines.packageManager.version')?.status).toBe('invalid');
+    expect(getCheck(project, 'devEngines.packageManager.version')?.expected).toBe('11.9.1');
+    expect(project.status).toBe('failed');
+  });
+
+  it('fails when the aligned node runtime contract falls below the current Node LTS floor', async () => {
+    const rootPath = await createFixtureProject();
+    const project = runAudit(rootPath, {
+      toolchainPolicy: createGovernanceToolchainPolicy({
+        node: {
+          minimumLtsVersion: '26.3.0',
+          minimumLtsMajor: 26,
+          latestVersion: '27.0.1',
+          latestMajor: 27,
+          checkedAt: '2026-05-27T09:00:00.000Z',
+          source: 'https://nodejs.org/dist/index.json',
+          ltsCodename: 'Krypton',
+          liveResolved: true,
+        },
+      }),
+    });
+
+    expect(getCheck(project, 'runtime contract >= current Node LTS')?.status).toBe('invalid');
+    expect(getCheck(project, 'runtime contract >= current Node LTS')?.expected).toBe('26.3.0');
+    expect(getCheck(project, 'runtime contract = current Node latest')).toBeUndefined();
+    expect(project.status).toBe('failed');
+  });
+
+  it('creates a non-failing warning when the aligned node runtime contract meets LTS but not latest', async () => {
+    const rootPath = await createFixtureProject();
+    const project = runAudit(rootPath, {
+      toolchainPolicy: createGovernanceToolchainPolicy({
+        node: {
+          minimumLtsVersion: '26.0.0',
+          minimumLtsMajor: 26,
+          latestVersion: '26.3.0',
+          latestMajor: 26,
+          checkedAt: '2026-05-27T09:00:00.000Z',
+          source: 'https://nodejs.org/dist/index.json',
+          ltsCodename: 'Krypton',
+          liveResolved: true,
+        },
+      }),
+    });
+
+    expect(getCheck(project, 'runtime contract >= current Node LTS')?.status).toBe('ok');
+    expect(getCheck(project, 'runtime contract = current Node latest')?.status).toBe('warning');
+    expect(getCheck(project, 'runtime contract = current Node latest')?.message ?? '').toContain('26.3.0');
+    expect(project.status).toBe('warning');
+    expect(project.summary.warningCount).toBeGreaterThan(0);
+    expect(project.summary.invalidCount).toBe(0);
+    expect(project.summary.missingCount).toBe(0);
+  });
+
+  it('passes when the aligned node runtime contract already matches the current latest release', async () => {
+    const rootPath = await createFixtureProject();
+    const project = runAudit(rootPath, {
+      toolchainPolicy: createGovernanceToolchainPolicy({
+        node: {
+          minimumLtsVersion: '26.0.0',
+          minimumLtsMajor: 26,
+          latestVersion: '26.2.0',
+          latestMajor: 26,
+          checkedAt: '2026-05-27T09:00:00.000Z',
+          source: 'https://nodejs.org/dist/index.json',
+          ltsCodename: 'Krypton',
+          liveResolved: true,
+        },
+      }),
+    });
+
+    expect(getCheck(project, 'runtime contract >= current Node LTS')?.status).toBe('ok');
+    expect(getCheck(project, 'runtime contract = current Node latest')?.status).toBe('ok');
+    expect(project.status).toBe('passed');
   });
 });

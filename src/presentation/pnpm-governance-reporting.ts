@@ -28,7 +28,7 @@ type RenderableGovernanceCheck = Pick<
   'actual' | 'expected' | 'file' | 'message' | 'presentationTone' | 'property'
 >;
 
-interface GovernanceCheckSummary {
+export interface GovernanceCheckSummary {
   okCount: number;
   warningCount: number;
   missingCount: number;
@@ -73,6 +73,9 @@ export function renderPnpmGovernanceAudit(governanceAudit: GovernanceAudit | nul
   console.log(`- Fortress passes: ${governanceAudit.summary.passCount}`);
   console.log(`- Fortress failures: ${governanceAudit.summary.failCount}`);
   console.log(`- Governance warnings: ${governanceAudit.summary.warningCount}`);
+  console.log(`- Required PNPM contract: ${governanceAudit.toolchainPolicy.pnpm.requiredVersion}`);
+  console.log(`- Node LTS floor: ${governanceAudit.toolchainPolicy.node.minimumLtsVersion}`);
+  console.log(`- Node latest guidance: ${governanceAudit.toolchainPolicy.node.latestVersion ?? 'unavailable for this run'}`);
   console.log('');
 
   if (governanceAudit.pnpmRuntime.warning) {
@@ -84,6 +87,13 @@ export function renderPnpmGovernanceAudit(governanceAudit: GovernanceAudit | nul
       for (const property of governanceAudit.recommendedProperties) {
         console.log(`  - ${property}`);
       }
+    }
+    console.log('');
+  }
+
+  if (governanceAudit.toolchainPolicy.warnings.length > 0) {
+    for (const warning of governanceAudit.toolchainPolicy.warnings) {
+      console.log(`${colorize(STATUS_WARN_SYMBOL, 'yellow')} ${colorize(warning, 'yellow')}`);
     }
     console.log('');
   }
@@ -126,10 +136,25 @@ export function renderPnpmGovernanceAudit(governanceAudit: GovernanceAudit | nul
     );
     if (rootProjectChecks.length > 0) {
       const okChecks = rootProjectChecks.filter((check) => check.status === 'ok');
-      const failedChecks = rootProjectChecks.filter((check) => check.status !== 'ok');
-      renderCheckSection('Successful checks:', okChecks, 'green', STATUS_OK_SYMBOL);
-      console.log('');
-      renderCheckSection('Failed checks:', failedChecks, 'red', STATUS_ERROR_SYMBOL);
+      const warningChecks = rootProjectChecks.filter((check) => check.status === 'warning');
+      const failedChecks = rootProjectChecks.filter((check) =>
+        check.status === 'missing' || check.status === 'invalid'
+      );
+      if (okChecks.length > 0) {
+        renderCheckSection('Successful checks:', okChecks, 'green', STATUS_OK_SYMBOL);
+      }
+      if (warningChecks.length > 0) {
+        if (okChecks.length > 0) {
+          console.log('');
+        }
+        renderCheckSection('Warning checks:', warningChecks, 'yellow', STATUS_WARN_SYMBOL);
+      }
+      if (failedChecks.length > 0) {
+        if (okChecks.length > 0 || warningChecks.length > 0) {
+          console.log('');
+        }
+        renderCheckSection('Failed checks:', failedChecks, 'red', STATUS_ERROR_SYMBOL);
+      }
     }
     renderWorkspacePackageSection(workspacePackageReports);
   }
@@ -143,6 +168,7 @@ export function serializeGovernanceAudit(governanceAudit: GovernanceAudit | null
 
   return {
     nodeRuntimeContract: governanceAudit.nodeRuntimeContract,
+    toolchainPolicy: governanceAudit.toolchainPolicy,
     recommendedProperties: governanceAudit.recommendedProperties,
     pnpmRuntime: governanceAudit.pnpmRuntime,
     discovery: governanceAudit.discovery ?? null,
@@ -233,7 +259,7 @@ function sortChecks<T extends Pick<GovernanceCheck, 'file' | 'message' | 'proper
 function renderCheckSection(
   title: string,
   checks: readonly GovernanceCheck[],
-  colorName: 'green' | 'red',
+  colorName: 'green' | 'red' | 'yellow',
   symbol: string,
   indentSpaces = 2,
 ): void {
@@ -253,7 +279,7 @@ function renderCheckSection(
 
 function checkPresentation(
   check: Pick<GovernanceCheck, 'presentationTone'>,
-  fallbackColorName: 'green' | 'red',
+  fallbackColorName: 'green' | 'red' | 'yellow',
   fallbackSymbol: string,
 ): {
   colorName: keyof typeof ANSI_COLORS;
@@ -465,12 +491,21 @@ function renderWorkspacePackageSection(
     );
 
     const okChecks = workspacePackageReport.checks.filter((check) => check.status === 'ok');
-    const failedChecks = workspacePackageReport.checks.filter((check) => check.status !== 'ok');
+    const warningChecks = workspacePackageReport.checks.filter((check) => check.status === 'warning');
+    const failedChecks = workspacePackageReport.checks.filter((check) =>
+      check.status === 'missing' || check.status === 'invalid'
+    );
     if (okChecks.length > 0) {
       renderCheckSection('Successful checks:', okChecks, 'green', STATUS_OK_SYMBOL, 6);
     }
-    if (failedChecks.length > 0) {
+    if (warningChecks.length > 0) {
       if (okChecks.length > 0) {
+        console.log('');
+      }
+      renderCheckSection('Warning checks:', warningChecks, 'yellow', STATUS_WARN_SYMBOL, 6);
+    }
+    if (failedChecks.length > 0) {
+      if (okChecks.length > 0 || warningChecks.length > 0) {
         console.log('');
       }
       renderCheckSection('Failed checks:', failedChecks, 'red', STATUS_ERROR_SYMBOL, 6);
