@@ -26,6 +26,7 @@ export interface FixtureWorkspaceMember {
   workspaceText?: string;
   lockfileText?: string;
   gitignoreText?: string;
+  preserveRootControlPlaneSurfaces?: boolean;
 }
 
 export interface FixtureProjectOptions {
@@ -58,6 +59,27 @@ function mergeJsonObjects(baseValue: unknown, overrideValue: unknown): JsonObjec
     ...toJsonObject(baseValue),
     ...toJsonObject(overrideValue),
   };
+}
+
+function jsonValuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function stripInheritedWorkspaceRootOnlySurfaces(packageJson: JsonObject): JsonObject {
+  const normalizedPackageJson = { ...packageJson };
+
+  if (jsonValuesEqual(normalizedPackageJson['packageManager'], BASE_PACKAGE_JSON['packageManager'])) {
+    delete normalizedPackageJson['packageManager'];
+  }
+
+  const devEngines = toJsonObject(normalizedPackageJson['devEngines']);
+  const baseDevEngines = toJsonObject(BASE_PACKAGE_JSON['devEngines']);
+  if (jsonValuesEqual(devEngines['packageManager'], baseDevEngines['packageManager'])) {
+    delete devEngines['packageManager'];
+  }
+  normalizedPackageJson['devEngines'] = devEngines;
+
+  return normalizedPackageJson;
 }
 
 const BASE_PACKAGE_JSON = parseJsonObject(
@@ -147,9 +169,12 @@ export async function createFixtureProject(
   for (const member of options.workspaceMembers ?? []) {
     const memberRoot = path.join(fixtureRoot, member.relativePath);
     await mkdir(memberRoot, { recursive: true });
+    const memberPackageJson = !member.workspaceText && !member.preserveRootControlPlaneSurfaces
+      ? stripInheritedWorkspaceRootOnlySurfaces(member.packageJson)
+      : member.packageJson;
     await writeFile(
       path.join(memberRoot, 'package.json'),
-      JSON.stringify(member.packageJson, null, 2),
+      JSON.stringify(memberPackageJson, null, 2),
     );
 
     if (member.workspaceText) {

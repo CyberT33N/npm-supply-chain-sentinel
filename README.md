@@ -194,8 +194,9 @@ The scanner evaluates the following surfaces exactly.
 | `pnpm-lock.yaml` | Must exist for deterministic installs. |
 | `.npmrc` | Optional, but if present it must be gitignored and may contain only allowed auth/certificate keys. |
 | `auth.ini` | Optional, but if present it must be gitignored. |
+| `.nvmrc` | Forbidden anywhere under the governed project root. The runtime truth belongs in `pnpm-workspace.yaml#nodeVersion` and deliberate package-local runtime surfaces, not in a parallel `nvm` convenience file. |
 | `.gitignore` | Warned if missing, because auth-local files must stay ignored. |
-| Workspace member `package.json` files | Discovered from `pnpm-workspace.yaml#packages` and audited for dependency governance. |
+| Workspace member `package.json` files | Discovered from `pnpm-workspace.yaml#packages` and audited for dependency governance plus monorepo leaf package-manager/runtime rules. |
 | Workspace member `.npmrc` / `auth.ini` | Invalid if present inside workspace packages. |
 
 #### `pnpm-workspace.yaml` shared Fortress policy
@@ -300,13 +301,13 @@ These same monorepo-only surfaces must be unset in a PNPM single-project reposit
 
 | Property | Rule scanned |
 | --- | --- |
-| `packageManager` | Must be `pnpm@<required-version>` and must pin an exact semver. The required version is live-resolved from the official `pnpm` metadata subject to the `minimumReleaseAge` gate; if live resolution fails, the scanner falls back to the checked-in reference contract. |
-| `engines.node` | Must be unset. |
-| `devEngines.runtime.name` | Must be `node`. |
-| `devEngines.runtime.version` | Must be an exact semver string. |
-| `devEngines.runtime.onFail` | Must be `error`. |
-| `devEngines.packageManager.name` | Must be `pnpm`. |
-| `devEngines.packageManager.version` | Must be the same exact required PNPM version as `packageManager`. |
+| `packageManager` | Must be `pnpm@<required-version>` and must pin an exact semver at the repository root. In a monorepo, workspace leaf packages must not declare it. |
+| `engines.node` | Must be unset by default. |
+| `engines.pnpm` | Must be unset. The PNPM control plane belongs in `packageManager` and `devEngines.packageManager`, not in a parallel compatibility surface. |
+| `engines.runtime` | Optional package-local runtime surface. When present, `name` must be `node`, `version` must be an exact semver, `onFail` must be `error`, and `devEngines.runtime` must also be present with the same exact version. Embedded Electron surfaces must not set it. |
+| `devEngines.runtime` | Optional package-local runtime surface. When present, `name` must be `node`, `version` must be an exact semver, and `onFail` must be `error`. Embedded Electron surfaces must not set it. |
+| `devEngines.packageManager.name` | Must be `pnpm` at the repository root control plane. In a monorepo, workspace leaf packages must not declare `devEngines.packageManager`. |
+| `devEngines.packageManager.version` | Must be the same exact required PNPM version as `packageManager` at the repository root control plane. |
 | `devEngines.packageManager.onFail` | Must be `error`. |
 | `pnpm` | Must be unset in `package.json`; PNPM policy must live in `pnpm-workspace.yaml`, not `package.json#pnpm`. |
 | `name` | Warned when missing at a monorepo root. |
@@ -315,9 +316,14 @@ These same monorepo-only surfaces must be unset in a PNPM single-project reposit
 
 | Policy | Rule scanned |
 | --- | --- |
-| Runtime identity | `package.json#devEngines.runtime.version` must equal `pnpm-workspace.yaml#nodeVersion`. |
+| Runtime surface identity | If `package.json#engines.runtime` is declared, `package.json#devEngines.runtime` must also be declared and both runtime versions must be identical. |
+| Single-project runtime identity | In a true single-project root, `package.json#devEngines.runtime.version` is compared against `pnpm-workspace.yaml#nodeVersion` only when `devEngines.runtime` is actually declared and the package is not an embedded-runtime surface. |
+| Monorepo runtime topology | The root `pnpm-workspace.yaml#nodeVersion` is not blanket-matched against every workspace leaf runtime surface. Mixed leaf runtime lines are allowed when owned by explicit package boundaries. |
+| Embedded runtime surfaces | Electron and other embedded-runtime package surfaces must not declare `engines.runtime` or `devEngines.runtime`. |
+| Monorepo package-manager topology | In a monorepo, `packageManager` and `devEngines.packageManager` belong on the workspace root only. Workspace leaf packages must not repeat them, and they must not use `engines.pnpm` as a substitute. |
 | Node LTS floor | The aligned runtime contract must be `>=` the current Node LTS floor resolved from the official Node release index. |
 | Node latest guidance | If the aligned runtime meets LTS but is below the current Node latest release, the audit emits a warning. If it matches latest, it passes. If it is newer than the resolved latest, the audit emits a warning to reconfirm upstream state. |
+| `.nvmrc` governance | A committed `.nvmrc` is a governance failure anywhere under the governed project root. |
 | Lockfile discipline | `pnpm-lock.yaml` must exist. |
 | Non-PNPM Node roots | Managed Node projects that do not show PNPM signals are reported as warnings, not Fortress passes. |
 
@@ -345,7 +351,8 @@ The scanner also enforces these auth-local policies exactly:
 - `tokenHelper` is forbidden in a project-local `.npmrc`, including registry-scoped `tokenHelper`, because a repo-local helper path can execute arbitrary local binaries
 - repository policy settings placed in `.npmrc` are failed and mapped to their intended governance surface:
   - repository policy belongs in `pnpm-workspace.yaml`
-  - runtime identity belongs in `package.json#devEngines.runtime.version` and `pnpm-workspace.yaml#nodeVersion`
+  - root engine-gate policy belongs in `pnpm-workspace.yaml#nodeVersion`
+  - deliberate package-local runtime contracts belong in `package.json#devEngines.runtime` or `package.json#engines.runtime`
   - machine-local infrastructure settings belong in global PNPM `config.yaml`
 - `auth.ini` is only checked for gitignore governance; its properties are not audited
 - workspace member `.npmrc` or `auth.ini` files are invalid and must not exist

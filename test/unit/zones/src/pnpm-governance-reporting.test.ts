@@ -111,7 +111,7 @@ describe('renderPnpmGovernanceAudit', () => {
       'devEngines.runtime.version = nodeVersion: devEngines.runtime.version and pnpm-workspace.yaml#nodeVersion are aligned on 26.2.0. | expected=same exact semver in package.json and pnpm-workspace.yaml | actual=26.2.0',
     );
     expect(output).toContain(
-      'engines.node: engines.node is intentionally unset to avoid a third root-level Node.js version authority and version drift. | expected=unset | actual=unset',
+      'engines.node: engines.node is intentionally unset so the root engine gate stays anchored in pnpm-workspace.yaml#nodeVersion and any deliberate root devEngines.runtime contract. | expected=unset | actual=unset',
     );
   });
 

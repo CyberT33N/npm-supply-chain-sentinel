@@ -21,8 +21,10 @@ The convention document defines the canonical policy.
 - applies managed-project discovery rules before a candidate is allowed into governance reporting
 - classifies accepted PNPM roots as `pnpm-single-project` or `pnpm-monorepo`
 - recursively promotes nested `pnpm-workspace.yaml` domains inside accepted PNPM roots, while still respecting the excluded-directory blacklist such as `node_modules` and `.pnpm`
-- validates `pnpm-workspace.yaml`, root `package.json`, lockfile presence, and project-local auth files
-- checks PNPM pinning, Node.js runtime alignment, build governance, trust policy, lockfile discipline, `saveExact: true`, exact catalog versions, and workspace protocol usage
+- validates `pnpm-workspace.yaml`, root `package.json`, lockfile presence, committed `.nvmrc` prohibition, and project-local auth files
+- enforces topology-aware package-manager governance: `packageManager` and `devEngines.packageManager` stay on the workspace root, while monorepo leaf packages must not declare `packageManager`, `devEngines.packageManager`, or `engines.pnpm`
+- enforces role-aware runtime governance: `engines.runtime` requires `devEngines.runtime`, single-project runtime identity is checked only when a root `devEngines.runtime` contract is actually declared, monorepos do not blanket-match root `nodeVersion` to every leaf runtime surface, and embedded Electron surfaces must not declare host-node runtime contracts
+- checks PNPM pinning, build governance, trust policy, lockfile discipline, `saveExact: true`, exact catalog versions, and workspace protocol usage
 - reports nested domains as child domains of their containing PNPM root instead of presenting them as unrelated standalone repos
 - can run as a standalone CLI that audits only PNPM governance without running IOC, malware, persistence, hosts, or firewall flows first
 

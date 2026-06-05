@@ -147,6 +147,10 @@ describe('auditPnpmGovernance', () => {
       rootProject.rootPath,
       nestedDomain.rootPath,
     ]);
+    expect(rootProject.checks.find((check) =>
+      check.file === path.join(rootPath, 'domains', 'billing-domain', 'package.json')
+      && check.property === 'packageManager'
+    )).toBeUndefined();
   });
 
   it('keeps ordinary workspace packages without their own workspace file out of nested-domain scanning', async () => {
@@ -290,7 +294,8 @@ describe('auditPnpmGovernance', () => {
     const runtimeCheck = getCheck(project, 'use-node-version');
 
     expect(runtimeCheck?.status).toBe('invalid');
-    expect(runtimeCheck?.message ?? '').toContain('package.json#devEngines.runtime.version');
+    expect(runtimeCheck?.message ?? '').toContain('package.json#devEngines.runtime');
+    expect(runtimeCheck?.message ?? '').toContain('package.json#engines.runtime');
     expect(runtimeCheck?.message ?? '').toContain('pnpm-workspace.yaml#nodeVersion');
   });
 

@@ -1,3 +1,6 @@
+import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 import YAML from 'yaml';
 
@@ -424,6 +427,24 @@ describe('pnpm governance rule matrix', () => {
     expect(getCheck(project, 'engines.node')?.status).toBe('ok');
   });
 
+  it('does not require devEngines.runtime in a single-project repository when no package-local runtime contract is declared', async () => {
+    const packageJson = createPackageJson();
+    const devEngines = packageJson['devEngines'];
+    if (!isMutableRecord(devEngines)) {
+      throw new TypeError('Expected devEngines to be a mutable object.');
+    }
+    delete devEngines['runtime'];
+
+    const project = runAudit(await createFixtureProject({
+      packageJson,
+      workspaceText: BASE_WORKSPACE_TEXT,
+    }));
+
+    expect(getCheck(project, 'devEngines.runtime')).toBeUndefined();
+    expect(getCheck(project, 'devEngines.runtime.version = nodeVersion')).toBeUndefined();
+    expect(project.status).toBe('passed');
+  });
+
   it('rejects runtime identity drift between package.json and pnpm-workspace.yaml', async () => {
     const rootPath = await createFixtureProject({
       workspaceText: mutateWorkspaceText(BASE_WORKSPACE_TEXT, (workspace) => {
@@ -455,6 +476,71 @@ describe('pnpm governance rule matrix', () => {
     expect(getCheck(project, 'devEngines.runtime.version')?.status).toBe('invalid');
   });
 
+  it('requires devEngines.runtime when engines.runtime is declared', async () => {
+    const packageJson = createPackageJson({
+      engines: {
+        runtime: {
+          name: 'node',
+          version: '26.2.0',
+          onFail: 'error',
+        },
+      },
+    });
+    const devEngines = packageJson['devEngines'];
+    if (!isMutableRecord(devEngines)) {
+      throw new TypeError('Expected devEngines to be a mutable object.');
+    }
+    delete devEngines['runtime'];
+
+    const project = runAudit(await createFixtureProject({
+      packageJson,
+    }));
+
+    expect(getCheck(project, 'devEngines.runtime')?.status).toBe('missing');
+    expect(getCheck(project, 'engines.runtime.version = devEngines.runtime.version')).toBeUndefined();
+  });
+
+  it('rejects drift between engines.runtime and devEngines.runtime when both are declared', async () => {
+    const rootPath = await createFixtureProject({
+      packageJson: createPackageJson({
+        engines: {
+          runtime: {
+            name: 'node',
+            version: '26.2.1',
+            onFail: 'error',
+          },
+        },
+      }),
+    });
+
+    const project = runAudit(rootPath);
+    const driftCheck = getCheck(project, 'engines.runtime.version = devEngines.runtime.version');
+
+    expect(driftCheck?.status).toBe('invalid');
+    expect(driftCheck?.actual).toBe('26.2.1 vs 26.2.0');
+  });
+
+  it('forbids embedded Electron single-project surfaces from declaring host-node runtime contracts', async () => {
+    const project = runAudit(await createFixtureProject({
+      packageJson: createPackageJson({
+        devDependencies: {
+          electron: '29.4.6',
+        },
+        engines: {
+          runtime: {
+            name: 'node',
+            version: '26.2.0',
+            onFail: 'error',
+          },
+        },
+      }),
+    }));
+
+    expect(getCheck(project, 'devEngines.runtime')?.status).toBe('invalid');
+    expect(getCheck(project, 'engines.runtime')?.status).toBe('invalid');
+    expect(getCheck(project, 'devEngines.runtime.version = nodeVersion')).toBeUndefined();
+  });
+
   it('rejects root engines.node when it is set', async () => {
     const rootPath = await createFixtureProject({
       packageJson: createPackageJson({
@@ -469,6 +555,18 @@ describe('pnpm governance rule matrix', () => {
 
     expect(enginesCheck?.status).toBe('invalid');
     expect(enginesCheck?.message ?? '').toMatch(/must stay unset/i);
+  });
+
+  it('rejects root engines.pnpm when it is set', async () => {
+    const project = runAudit(await createFixtureProject({
+      packageJson: createPackageJson({
+        engines: {
+          pnpm: '>=11 <12',
+        },
+      }),
+    }));
+
+    expect(getCheck(project, 'engines.pnpm')?.status).toBe('invalid');
   });
 
   it('rejects non-exact root packageManager versions', async () => {
@@ -497,6 +595,157 @@ describe('pnpm governance rule matrix', () => {
 
     const project = runAudit(rootPath);
     expect(getCheck(project, 'devEngines.packageManager.version')?.status).toBe('invalid');
+  });
+
+  it('forbids package-manager authority surfaces inside monorepo workspace leaf packages', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: buildMonorepoWorkspaceText(BASE_WORKSPACE_TEXT),
+      workspaceMembers: [
+        {
+          relativePath: 'packages/fixture-app',
+          preserveRootControlPlaneSurfaces: true,
+          packageJson: {
+            name: '@fixture/fixture-app',
+            version: '1.0.0',
+            private: true,
+            type: 'module',
+            packageManager: `pnpm@${PNPM_RUNTIME.requiredVersion}`,
+            devEngines: {
+              packageManager: {
+                name: 'pnpm',
+                version: PNPM_RUNTIME.requiredVersion,
+                onFail: 'error',
+              },
+            },
+            engines: {
+              pnpm: '>=11 <12',
+            },
+          },
+        },
+      ],
+    });
+
+    const project = runAudit(rootPath);
+    const memberPackageJsonPath = path.join(rootPath, 'packages', 'fixture-app', 'package.json');
+    const memberChecks = project.checks.filter((check) => check.file === memberPackageJsonPath);
+
+    expect(memberChecks.find((check) => check.property === 'packageManager')?.status).toBe('invalid');
+    expect(memberChecks.find((check) => check.property === 'devEngines.packageManager')?.status).toBe('invalid');
+    expect(memberChecks.find((check) => check.property === 'engines.pnpm')?.status).toBe('invalid');
+  });
+
+  it('allows monorepo workspace leaf runtime lines to diverge from the root nodeVersion', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: buildMonorepoWorkspaceText(BASE_WORKSPACE_TEXT),
+      workspaceMembers: [
+        {
+          relativePath: 'packages/runtime-owned-app',
+          packageJson: {
+            name: '@fixture/runtime-owned-app',
+            version: '1.0.0',
+            private: true,
+            type: 'module',
+            devEngines: {
+              runtime: {
+                name: 'node',
+                version: '25.0.0',
+                onFail: 'error',
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    const project = runAudit(rootPath);
+    const memberPackageJsonPath = path.join(rootPath, 'packages', 'runtime-owned-app', 'package.json');
+
+    expect(
+      project.checks.find((check) =>
+        check.file === memberPackageJsonPath
+        && check.property === 'devEngines.runtime.version'
+      )?.status,
+    ).toBe('ok');
+    expect(
+      project.checks.find((check) =>
+        check.file === memberPackageJsonPath
+        && check.property === 'devEngines.runtime.version = nodeVersion'
+      ),
+    ).toBeUndefined();
+  });
+
+  it('forbids embedded Electron runtime surfaces in monorepo workspace leaf packages', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: buildMonorepoWorkspaceText(BASE_WORKSPACE_TEXT),
+      workspaceMembers: [
+        {
+          relativePath: 'packages/electron-app',
+          packageJson: {
+            name: '@fixture/electron-app',
+            version: '1.0.0',
+            private: true,
+            type: 'module',
+            devDependencies: {
+              electron: '29.4.6',
+            },
+            devEngines: {
+              runtime: {
+                name: 'node',
+                version: '26.2.0',
+                onFail: 'error',
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    const project = runAudit(rootPath);
+    const memberPackageJsonPath = path.join(rootPath, 'packages', 'electron-app', 'package.json');
+
+    expect(
+      project.checks.find((check) =>
+        check.file === memberPackageJsonPath
+        && check.property === 'devEngines.runtime'
+      )?.status,
+    ).toBe('invalid');
+  });
+
+  it('forbids committed .nvmrc files at the governed project root', async () => {
+    const rootPath = await createFixtureProject();
+    await writeFile(path.join(rootPath, '.nvmrc'), '26.2.0\n');
+
+    const project = runAudit(rootPath);
+
+    expect(getCheck(project, '.nvmrc')?.status).toBe('invalid');
+  });
+
+  it('forbids committed .nvmrc files inside monorepo workspace leaf packages', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: buildMonorepoWorkspaceText(BASE_WORKSPACE_TEXT),
+      workspaceMembers: [
+        {
+          relativePath: 'packages/fixture-app',
+          packageJson: {
+            name: '@fixture/fixture-app',
+            version: '1.0.0',
+            private: true,
+            type: 'module',
+          },
+        },
+      ],
+    });
+    await writeFile(path.join(rootPath, 'packages', 'fixture-app', '.nvmrc'), '26.2.0\n');
+
+    const project = runAudit(rootPath);
+    const memberNvmrcPath = path.join(rootPath, 'packages', 'fixture-app', '.nvmrc');
+
+    expect(
+      project.checks.find((check) =>
+        check.file === memberNvmrcPath
+        && check.property === '.nvmrc'
+      )?.status,
+    ).toBe('invalid');
   });
 
   it('mentions the preferred internal registry path when registries.default is missing', async () => {

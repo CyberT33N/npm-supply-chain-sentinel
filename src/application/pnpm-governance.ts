@@ -47,9 +47,13 @@ import {
 import { commandExists, runCommand } from '../infrastructure/process-utils';
 
 const GITIGNORE_BASENAME = '.gitignore';
+const NVMRC_BASENAME = '.nvmrc';
 const PACKAGE_JSON_BASENAME = 'package.json';
 const GOVERNANCE_DISCOVERY_REASON_UNMANAGED_PATH = 'unmanaged-path';
 const GOVERNANCE_DISCOVERY_REASON_MISSING_OWNERSHIP = 'missing-ownership';
+const EMBEDDED_RUNTIME_DEPENDENCY_NAMES = Object.freeze([
+  'electron',
+]);
 
 type ScanMode = typeof SCAN_MODE_MACHINE | 'project';
 type GovernanceDiscoveryReason =
@@ -122,6 +126,12 @@ interface RuntimeContract extends Record<string, unknown> {
   onFail?: unknown;
 }
 
+interface EnginesContract extends Record<string, unknown> {
+  node?: unknown;
+  pnpm?: unknown;
+  runtime?: RuntimeContract;
+}
+
 interface DevEnginesContract extends Record<string, unknown> {
   runtime?: RuntimeContract;
   packageManager?: RuntimeContract;
@@ -132,7 +142,7 @@ interface ManifestLike extends Record<string, unknown> {
   devEngines?: DevEnginesContract;
   pnpm?: unknown;
   name?: unknown;
-  engines?: ({ node?: unknown } & Record<string, unknown>);
+  engines?: EnginesContract;
   dependencies?: Record<string, unknown>;
   devDependencies?: Record<string, unknown>;
   optionalDependencies?: Record<string, unknown>;
@@ -146,6 +156,11 @@ interface WorkspaceConfig extends Record<string, unknown> {
 interface YamlReadResult {
   rawText: string | null;
   value: unknown | null;
+}
+
+interface RuntimeContractAuditResult {
+  present: boolean;
+  exactVersion: string | null;
 }
 
 export interface GovernanceCheck {
@@ -204,6 +219,9 @@ const GLOBAL_PNPM_CONFIG_SURFACES = new Map<string, string>(buildNormalizedSurfa
 ]));
 const PACKAGE_JSON_TOOLCHAIN_SURFACES = new Map<string, string>(buildNormalizedSurfaceEntries([
   ['packageManager', 'packageManager'],
+  ['engines.pnpm', 'engines.pnpm'],
+  ['engines.runtime', 'engines.runtime'],
+  ['engines.runtime.version', 'engines.runtime.version'],
   ['devEngines.runtime', 'devEngines.runtime'],
   ['devEngines.runtime.version', 'devEngines.runtime.version'],
   ['devEngines.packageManager', 'devEngines.packageManager'],
@@ -821,8 +839,14 @@ function auditProjectRoot(
       workspaceMembers,
       toolchainPolicy.pnpm,
     );
-    auditRuntimeIdentityContract(checks, packageJson.value, workspaceConfig);
-    auditNodeRuntimeVersionPolicy(checks, packageJson.value, workspaceConfig, toolchainPolicy.node);
+    auditForbiddenNvmrcFiles(checks, rootPath);
+    if (
+      classification.repoMode === 'single-project'
+      && !detectEmbeddedRuntimeDependency(toManifest(packageJson.value))
+    ) {
+      auditRuntimeIdentityContract(checks, packageJson.value, workspaceConfig);
+      auditNodeRuntimeVersionPolicy(checks, packageJson.value, workspaceConfig, toolchainPolicy.node);
+    }
     auditLockfile(checks, pnpmLockfilePath);
     auditProjectAuthFiles(checks, gitignorePath, [
       {
@@ -1086,9 +1110,17 @@ function auditRootPackageJson(
   if (!manifest) {
     return;
   }
+  const embeddedRuntimeDependency = detectEmbeddedRuntimeDependency(manifest);
   auditPackageManagerField(checks, manifest, pnpmPolicy);
   auditEnginesNode(checks, manifest);
-  auditDevRuntime(checks, manifest);
+  auditEnginesPnpm(checks, manifest);
+  auditRuntimeSurfaceGovernance(
+    checks,
+    manifest,
+    PACKAGE_JSON_BASENAME,
+    classification.repoMode,
+    embeddedRuntimeDependency,
+  );
   auditDevPackageManager(checks, manifest, pnpmPolicy);
   const workspaceNameToRoot = buildWorkspaceNameToRootMap(workspaceMembers);
   auditWorkspaceProtocolUsage(checks, manifest, rootPath, workspaceNameToRoot);
@@ -1197,7 +1229,7 @@ function auditEnginesNode(checks: GovernanceCheck[], manifest: ManifestLike): vo
       status: 'ok',
       expected: 'unset',
       actual: 'unset',
-      message: 'engines.node is intentionally unset to avoid a third root-level Node.js version authority and version drift.',
+      message: 'engines.node is intentionally unset so the root engine gate stays anchored in pnpm-workspace.yaml#nodeVersion and any deliberate root devEngines.runtime contract.',
     });
     return;
   }
@@ -1208,75 +1240,229 @@ function auditEnginesNode(checks: GovernanceCheck[], manifest: ManifestLike): vo
     status: 'invalid',
     expected: 'unset',
     actual: formatValue(enginesNode),
-    message: 'engines.node must stay unset by default. The exact internal runtime contract already lives in devEngines.runtime.version and pnpm-workspace.yaml#nodeVersion.',
+    message: 'engines.node must stay unset by default. Treat it only as an explicit compatibility contract, never as a parallel root runtime authority.',
   });
 }
 
-function auditDevRuntime(checks: GovernanceCheck[], manifest: ManifestLike): void {
-  const runtime = manifest?.devEngines?.runtime;
-  if (!runtime || typeof runtime !== 'object') {
+function auditEnginesPnpm(checks: GovernanceCheck[], manifest: ManifestLike): void {
+  const enginesPnpm = manifest?.engines?.pnpm;
+  if (enginesPnpm === undefined) {
     pushCheck(checks, {
       file: PACKAGE_JSON_BASENAME,
-      property: 'devEngines.runtime',
-      status: 'missing',
-      message: 'devEngines.runtime must pin the Node.js runtime contract.',
+      property: 'engines.pnpm',
+      status: 'ok',
+      expected: 'unset',
+      actual: 'unset',
+      message: 'engines.pnpm is intentionally unset because packageManager and devEngines.packageManager already define the PNPM control plane.',
     });
     return;
   }
 
-  if (runtime.name !== 'node') {
+  pushCheck(checks, {
+    file: PACKAGE_JSON_BASENAME,
+    property: 'engines.pnpm',
+    status: 'invalid',
+    expected: 'unset',
+    actual: formatValue(enginesPnpm),
+    message: 'engines.pnpm must stay unset. The PNPM control plane belongs in packageManager and devEngines.packageManager, not in a third compatibility surface.',
+  });
+}
+
+function auditRuntimeSurfaceGovernance(
+  checks: GovernanceCheck[],
+  manifest: ManifestLike,
+  manifestFile: string,
+  repoMode: GovernanceRepoMode,
+  embeddedRuntimeDependency: string | null,
+): void {
+  const enginesRuntime = manifest?.engines?.runtime;
+  const devRuntime = manifest?.devEngines?.runtime;
+  if (embeddedRuntimeDependency) {
+    auditForbiddenEmbeddedRuntimeSurface(
+      checks,
+      manifestFile,
+      'engines.runtime',
+      enginesRuntime,
+      embeddedRuntimeDependency,
+    );
+    auditForbiddenEmbeddedRuntimeSurface(
+      checks,
+      manifestFile,
+      'devEngines.runtime',
+      devRuntime,
+      embeddedRuntimeDependency,
+    );
+    return;
+  }
+
+  const enginesRuntimeAudit = auditRuntimeContractSurface(
+    checks,
+    manifestFile,
+    'engines.runtime',
+    enginesRuntime,
+  );
+  const devRuntimeAudit = auditRuntimeContractSurface(
+    checks,
+    manifestFile,
+    'devEngines.runtime',
+    devRuntime,
+    {
+      required: enginesRuntime !== undefined,
+      requiredMessage: 'devEngines.runtime must also be declared when engines.runtime is set.',
+    },
+  );
+
+  if (enginesRuntimeAudit.present && devRuntimeAudit.exactVersion) {
+    const enginesRuntimeExactVersion = enginesRuntimeAudit.exactVersion;
+    if (!enginesRuntimeExactVersion) {
+      return;
+    }
+    if (enginesRuntimeExactVersion !== devRuntimeAudit.exactVersion) {
+      pushCheck(checks, {
+        file: manifestFile,
+        property: 'engines.runtime.version = devEngines.runtime.version',
+        status: 'invalid',
+        expected: 'same exact semver in both runtime surfaces',
+        actual: `${enginesRuntimeExactVersion} vs ${devRuntimeAudit.exactVersion}`,
+        message: 'engines.runtime.version and devEngines.runtime.version must remain identical when both runtime surfaces are declared.',
+      });
+      return;
+    }
+
     pushCheck(checks, {
-      file: PACKAGE_JSON_BASENAME,
-      property: 'devEngines.runtime.name',
-      status: 'invalid',
-      expected: 'node',
-      actual: formatValue(runtime.name),
-      message: 'devEngines.runtime.name must be "node".',
-    });
-  } else {
-    pushCheck(checks, {
-      file: PACKAGE_JSON_BASENAME,
-      property: 'devEngines.runtime.name',
+      file: manifestFile,
+      property: 'engines.runtime.version = devEngines.runtime.version',
       status: 'ok',
-      expected: 'node',
-      actual: 'node',
-      message: 'devEngines.runtime.name is node.',
+      expected: 'same exact semver in both runtime surfaces',
+      actual: enginesRuntimeExactVersion,
+      message: `engines.runtime.version and devEngines.runtime.version are aligned on ${enginesRuntimeExactVersion}.`,
     });
   }
 
-  const version = typeof runtime.version === 'string' ? runtime.version : null;
-  if (!version) {
+  if (repoMode === 'monorepo') {
+    return;
+  }
+}
+
+function auditRuntimeContractSurface(
+  checks: GovernanceCheck[],
+  manifestFile: string,
+  propertyPrefix: 'devEngines.runtime' | 'engines.runtime',
+  surfaceValue: unknown,
+  options: {
+    required?: boolean;
+    requiredMessage?: string;
+  } = {},
+): RuntimeContractAuditResult {
+  if (surfaceValue === undefined) {
+    if (options.required) {
+      pushCheck(checks, {
+        file: manifestFile,
+        property: propertyPrefix,
+        status: 'missing',
+        message: options.requiredMessage ?? `${propertyPrefix} must be declared.`,
+      });
+    }
+    return {
+      present: false,
+      exactVersion: null,
+    };
+  }
+
+  if (!isPlainObject(surfaceValue)) {
     pushCheck(checks, {
-      file: PACKAGE_JSON_BASENAME,
-      property: 'devEngines.runtime.version',
-      status: 'missing',
-      expected: 'exact semver string',
-      message: 'devEngines.runtime.version must be declared.',
+      file: manifestFile,
+      property: propertyPrefix,
+      status: 'invalid',
+      expected: 'runtime contract object',
+      actual: formatValue(surfaceValue),
+      message: `${propertyPrefix} must be an object with name, version, and onFail.`,
+    });
+    return {
+      present: true,
+      exactVersion: null,
+    };
+  }
+
+  const runtime = surfaceValue;
+  if (runtime['name'] !== 'node') {
+    pushCheck(checks, {
+      file: manifestFile,
+      property: `${propertyPrefix}.name`,
+      status: 'invalid',
+      expected: 'node',
+      actual: formatValue(runtime['name']),
+      message: `${propertyPrefix}.name must be "node".`,
     });
   } else {
-    const exactVersion = semver.valid(version);
+    pushCheck(checks, {
+      file: manifestFile,
+      property: `${propertyPrefix}.name`,
+      status: 'ok',
+      expected: 'node',
+      actual: 'node',
+      message: `${propertyPrefix}.name is node.`,
+    });
+  }
+
+  let exactVersion: string | null = null;
+  const version = typeof runtime['version'] === 'string' ? runtime['version'] : null;
+  if (!version) {
+    pushCheck(checks, {
+      file: manifestFile,
+      property: `${propertyPrefix}.version`,
+      status: 'missing',
+      expected: 'exact semver string',
+      message: `${propertyPrefix}.version must be declared.`,
+    });
+  } else {
+    exactVersion = semver.valid(version);
     if (!exactVersion) {
       pushCheck(checks, {
-        file: PACKAGE_JSON_BASENAME,
-        property: 'devEngines.runtime.version',
+        file: manifestFile,
+        property: `${propertyPrefix}.version`,
         status: 'invalid',
         expected: 'exact semver string',
         actual: version,
-        message: 'devEngines.runtime.version must be an exact semver string with no range markers such as ^, ~, >, or >=.',
+        message: `${propertyPrefix}.version must be an exact semver string with no range markers such as ^, ~, >, or >=.`,
       });
     } else {
       pushCheck(checks, {
-        file: PACKAGE_JSON_BASENAME,
-        property: 'devEngines.runtime.version',
+        file: manifestFile,
+        property: `${propertyPrefix}.version`,
         status: 'ok',
         expected: 'exact semver string',
         actual: exactVersion,
-        message: `devEngines.runtime.version pins the exact approved Node.js runtime contract at ${exactVersion}.`,
+        message: `${propertyPrefix}.version pins the exact approved Node.js runtime contract at ${exactVersion}.`,
       });
     }
   }
 
-  pushEqualityCheck(checks, runtime, PACKAGE_JSON_BASENAME, 'onFail', 'error', 'devEngines.runtime.onFail');
+  pushEqualityCheck(checks, runtime, manifestFile, 'onFail', 'error', `${propertyPrefix}.onFail`);
+  return {
+    present: true,
+    exactVersion,
+  };
+}
+
+function auditForbiddenEmbeddedRuntimeSurface(
+  checks: GovernanceCheck[],
+  manifestFile: string,
+  property: 'devEngines.runtime' | 'engines.runtime',
+  actual: unknown,
+  embeddedRuntimeDependency: string,
+): void {
+  if (actual === undefined) {
+    return;
+  }
+  pushCheck(checks, {
+    file: manifestFile,
+    property,
+    status: 'invalid',
+    expected: 'unset',
+    actual: formatValue(actual),
+    message: `${property} must stay unset for an embedded-runtime package surface detected via ${embeddedRuntimeDependency}. Embedded applications such as Electron must not publish host-node runtime contracts here.`,
+  });
 }
 
 function auditDevPackageManager(
@@ -1586,6 +1772,76 @@ function auditProjectAuthFiles(
   }
 }
 
+function auditForbiddenNvmrcFiles(checks: GovernanceCheck[], projectRootPath: string): void {
+  const nvmrcPaths = discoverForbiddenNvmrcPaths(projectRootPath);
+  if (nvmrcPaths.length === 0) {
+    pushCheck(checks, {
+      file: NVMRC_BASENAME,
+      property: NVMRC_BASENAME,
+      status: 'ok',
+      expected: 'absent',
+      actual: 'absent',
+      message: 'No committed .nvmrc file was discovered under the governed project root.',
+    });
+    return;
+  }
+
+  for (const nvmrcPath of nvmrcPaths) {
+    pushCheck(checks, {
+      file: nvmrcPath,
+      property: NVMRC_BASENAME,
+      status: 'invalid',
+      expected: 'absent',
+      actual: 'present',
+      message: '.nvmrc is forbidden in Fortress governance. The runtime truth belongs in pnpm-workspace.yaml#nodeVersion and deliberate package runtime surfaces, not in a parallel nvm convenience file.',
+    });
+  }
+}
+
+function discoverForbiddenNvmrcPaths(projectRootPath: string): string[] {
+  const discovered: string[] = [];
+  const stack = [projectRootPath];
+  const visited = new Set<string>();
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (typeof current !== 'string') {
+      continue;
+    }
+    const realCurrent = safeRealpath(current);
+    if (visited.has(realCurrent)) {
+      continue;
+    }
+    visited.add(realCurrent);
+
+    let entries = [];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (direntIsDirectory(entry, fullPath)) {
+        if (isDirectorySymlink(fullPath) || shouldSkipGovernanceDirectory(entry.name, {})) {
+          continue;
+        }
+        if (fileExists(path.join(fullPath, PNPM_WORKSPACE_BASENAME))) {
+          continue;
+        }
+        stack.push(fullPath);
+        continue;
+      }
+      if (entry.name === NVMRC_BASENAME) {
+        discovered.push(path.resolve(fullPath));
+      }
+    }
+  }
+
+  return discovered.sort((left, right) => left.localeCompare(right));
+}
+
 function explainMisplacedProjectAuthSetting(rawKey: string): string | null {
   if (rawKey === 'registry') {
     return 'registry must not live in a project-local .npmrc. In Fortress mode, the approved default registry is a visible repository policy. Move it to pnpm-workspace.yaml#registries.default so every developer and CI runner resolves against the same reviewed origin instead of inheriting a hidden machine-local override.';
@@ -1597,11 +1853,11 @@ function explainMisplacedProjectAuthSetting(rawKey: string): string | null {
 
   const normalizedKey = normalizeConfigKeyForLookup(rawKey);
   if (normalizedKey === normalizeConfigKeyForLookup('useNodeVersion')) {
-    return 'useNodeVersion must not live in a project-local .npmrc. PNPM removed useNodeVersion from .npmrc-based governance. Model the exact runtime contract in package.json#devEngines.runtime.version and keep pnpm-workspace.yaml#nodeVersion aligned with it instead.';
+    return 'useNodeVersion must not live in a project-local .npmrc. PNPM removed useNodeVersion from .npmrc-based governance. Model the root engine gate in pnpm-workspace.yaml#nodeVersion and any deliberate package-local runtime contract in package.json#devEngines.runtime or package.json#engines.runtime instead.';
   }
 
   if (normalizedKey === normalizeConfigKeyForLookup('nodeVersion')) {
-    return `nodeVersion must not live in a project-local .npmrc. Move it to pnpm-workspace.yaml#nodeVersion and keep it aligned with package.json#devEngines.runtime.version. ${PROJECT_AUTH_LOCAL_POLICY_DRIFT_MESSAGE}`;
+    return `nodeVersion must not live in a project-local .npmrc. Move it to pnpm-workspace.yaml#nodeVersion. Deliberate package-local runtime contracts belong in package.json#devEngines.runtime or package.json#engines.runtime instead. ${PROJECT_AUTH_LOCAL_POLICY_DRIFT_MESSAGE}`;
   }
 
   const packageJsonSurface = PACKAGE_JSON_TOOLCHAIN_SURFACES.get(normalizedKey);
@@ -1639,15 +1895,18 @@ function auditWorkspaceMembers(
   const workspaceNameToRoot = buildWorkspaceNameToRootMap(members);
 
   for (const member of members) {
+    const memberManifestPath = path.join(member.rootPath, PACKAGE_JSON_BASENAME);
+    const isNestedWorkspaceDomain = fileExists(path.join(member.rootPath, PNPM_WORKSPACE_BASENAME));
     if (!member.packageJson.rawText || !toManifest(member.packageJson.value)) {
       pushCheck(checks, {
-        file: normalizeForDisplay(path.join(member.rootPath, PACKAGE_JSON_BASENAME)),
+        file: normalizeForDisplay(memberManifestPath),
         property: PACKAGE_JSON_BASENAME,
         status: 'invalid',
         message: `Workspace package at ${normalizeForDisplay(member.rootPath)} has an unreadable or invalid package.json.`,
       });
       continue;
     }
+    const memberManifest = toManifest(member.packageJson.value) ?? {};
 
     for (const authFileName of PROJECT_AUTH_FILE_BASENAMES) {
       const authFilePath = path.join(member.rootPath, authFileName);
@@ -1661,9 +1920,88 @@ function auditWorkspaceMembers(
       }
     }
 
-    auditWorkspaceProtocolUsage(checks, toManifest(member.packageJson.value) ?? {}, member.rootPath, workspaceNameToRoot);
-    auditCatalogDependencyUsage(checks, toManifest(member.packageJson.value) ?? {}, member.rootPath, workspaceNameToRoot);
+    if (!isNestedWorkspaceDomain) {
+      auditWorkspaceLeafPackageManagerSurfaces(checks, memberManifest, memberManifestPath);
+      auditRuntimeSurfaceGovernance(
+        checks,
+        memberManifest,
+        memberManifestPath,
+        'monorepo',
+        detectEmbeddedRuntimeDependency(memberManifest),
+      );
+    }
+
+    auditWorkspaceProtocolUsage(checks, memberManifest, member.rootPath, workspaceNameToRoot);
+    auditCatalogDependencyUsage(checks, memberManifest, member.rootPath, workspaceNameToRoot);
   }
+}
+
+function auditWorkspaceLeafPackageManagerSurfaces(
+  checks: GovernanceCheck[],
+  manifest: ManifestLike,
+  manifestFile: string,
+): void {
+  auditForbiddenWorkspaceLeafSurface(
+    checks,
+    manifestFile,
+    'packageManager',
+    manifest.packageManager,
+    'Workspace leaf packages must not declare packageManager. The shared PNPM install domain has exactly one root control plane.',
+  );
+  auditForbiddenWorkspaceLeafSurface(
+    checks,
+    manifestFile,
+    'devEngines.packageManager',
+    manifest?.devEngines?.packageManager,
+    'Workspace leaf packages must not declare devEngines.packageManager. The PNPM control plane belongs on the workspace root only.',
+  );
+  auditForbiddenWorkspaceLeafSurface(
+    checks,
+    manifestFile,
+    'engines.pnpm',
+    manifest?.engines?.pnpm,
+    'Workspace leaf packages must not declare engines.pnpm. Do not introduce a parallel PNPM version authority beneath the workspace root.',
+  );
+}
+
+function auditForbiddenWorkspaceLeafSurface(
+  checks: GovernanceCheck[],
+  manifestFile: string,
+  property: string,
+  actual: unknown,
+  message: string,
+): void {
+  if (actual === undefined) {
+    return;
+  }
+  pushCheck(checks, {
+    file: manifestFile,
+    property,
+    status: 'invalid',
+    expected: 'unset',
+    actual: formatValue(actual),
+    message,
+  });
+}
+
+function detectEmbeddedRuntimeDependency(manifest: ManifestLike | null): string | null {
+  if (!manifest) {
+    return null;
+  }
+
+  for (const section of MANIFEST_DEPENDENCY_SECTIONS) {
+    const dependencies = manifest[section];
+    if (!isObjectRecord(dependencies)) {
+      continue;
+    }
+    for (const dependencyName of EMBEDDED_RUNTIME_DEPENDENCY_NAMES) {
+      if (dependencyName in dependencies) {
+        return dependencyName;
+      }
+    }
+  }
+
+  return null;
 }
 
 function auditWorkspaceProtocolUsage(
