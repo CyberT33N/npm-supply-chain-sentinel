@@ -266,9 +266,9 @@ describe('renderPnpmGovernanceAudit', () => {
       PNPM_RUNTIME,
       createGovernanceToolchainPolicy({
         pnpm: {
-          requiredVersion: '11.2.2',
+          requiredVersion: '11.5.0',
           requiredMajor: 11,
-          latestVersion: '11.3.0',
+          latestVersion: '11.5.2',
           minimumReleaseAgeMinutes: 10080,
           latestPublishedAt: '2026-05-24T08:43:45.834Z',
           requiredPublishedAt: '2026-05-19T08:43:45.834Z',
@@ -285,10 +285,10 @@ describe('renderPnpmGovernanceAudit', () => {
       renderPnpmGovernanceAudit(audit);
     }));
 
-    expect(output).toContain('- Required PNPM contract: 11.2.2');
-    expect(output).toContain('- Official PNPM latest: 11.3.0');
+    expect(output).toContain('- Required PNPM contract: 11.5.0');
+    expect(output).toContain('- Official PNPM latest: 11.5.2');
     expect(output).toContain('minimumReleaseAge gate (10080 minutes)');
-    expect(output).toContain('Fortress currently keeps 11.2.2 as the newest allowed PNPM contract.');
+    expect(output).toContain('Fortress currently keeps 11.5.0 as the newest allowed PNPM contract.');
     expect(output).toContain('Published=2026-05-24T08:43:45.834Z cutoff=2026-05-20T09:34:35.333Z');
   });
 
@@ -360,11 +360,11 @@ describe('renderPnpmGovernanceAudit', () => {
     const project = serialized?.projects[0];
 
     expect(serialized?.summary.workspacePackageCount).toBe(2);
-    expect(serialized?.toolchainPolicy.pnpm.requiredVersion).toBe('11.2.2');
+    expect(serialized?.toolchainPolicy.pnpm.requiredVersion).toBe(PNPM_RUNTIME.requiredVersion);
     expect(serialized?.toolchainPolicy.pnpm.minimumReleaseAgeMinutes).toBe(10080);
     expect(serialized?.toolchainPolicy.node.minimumLtsVersion).toBe('26.2.0');
     expect(payload.governance?.summary.workspacePackageCount).toBe(2);
-    expect(payload.governance?.toolchainPolicy.pnpm.requiredVersion).toBe('11.2.2');
+    expect(payload.governance?.toolchainPolicy.pnpm.requiredVersion).toBe(PNPM_RUNTIME.requiredVersion);
     expect(project?.summary.workspacePackageCount).toBe(2);
     expect(project?.rootChecks.some((check) => check.property === 'saveExact')).toBe(true);
     expect(project?.workspacePackages).toHaveLength(2);

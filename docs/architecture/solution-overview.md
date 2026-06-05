@@ -6,7 +6,7 @@
 
 - curated IOC and campaign dataset
 - cross-platform filesystem and package scanning
-- PNPM 11 Fortress governance auditing for managed project roots
+- PNPM Fortress governance auditing for managed project roots
 - standalone PNPM governance CLI execution for explicit project roots
 - project-mode and machine-wide scan modes
 - worker-thread-based parallel traversal

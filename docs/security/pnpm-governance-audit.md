@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The PNPM governance audit verifies whether managed Node.js and PNPM project roots comply with the repository's PNPM 11 Fortress governance policy.
+The PNPM governance audit verifies whether managed Node.js and PNPM project roots comply with the repository's PNPM Fortress governance policy.
 
 It is intentionally separate from the IOC and malware scan surface.
 
@@ -22,7 +22,7 @@ The convention document defines the canonical policy.
 - classifies accepted PNPM roots as `pnpm-single-project` or `pnpm-monorepo`
 - recursively promotes nested `pnpm-workspace.yaml` domains inside accepted PNPM roots, while still respecting the excluded-directory blacklist such as `node_modules` and `.pnpm`
 - validates `pnpm-workspace.yaml`, root `package.json`, lockfile presence, and project-local auth files
-- checks PNPM 11 pinning, Node.js runtime alignment, build governance, trust policy, lockfile discipline, `saveExact: true`, exact catalog versions, and workspace protocol usage
+- checks PNPM pinning, Node.js runtime alignment, build governance, trust policy, lockfile discipline, `saveExact: true`, exact catalog versions, and workspace protocol usage
 - reports nested domains as child domains of their containing PNPM root instead of presenting them as unrelated standalone repos
 - can run as a standalone CLI that audits only PNPM governance without running IOC, malware, persistence, hosts, or firewall flows first
 

@@ -70,19 +70,21 @@ export const BASE_WORKSPACE_TEXT = readFileSync(
   'utf8',
 );
 
+const REFERENCE_TOOLCHAIN_POLICY = createReferenceGovernanceToolchainPolicy();
+
 export const PNPM_RUNTIME: PnpmRuntimeInfo = Object.freeze({
   available: true,
-  version: '11.2.2',
-  major: 11,
-  requiredMajor: 11,
-  requiredVersion: '11.2.2',
+  version: REFERENCE_TOOLCHAIN_POLICY.pnpm.requiredVersion,
+  major: REFERENCE_TOOLCHAIN_POLICY.pnpm.requiredMajor,
+  requiredMajor: REFERENCE_TOOLCHAIN_POLICY.pnpm.requiredMajor,
+  requiredVersion: REFERENCE_TOOLCHAIN_POLICY.pnpm.requiredVersion,
   matchesRequiredMajor: true,
   matchesRequiredVersion: true,
   warning: null,
 });
 
 export const GOVERNANCE_TOOLCHAIN_POLICY: GovernanceToolchainPolicy = Object.freeze(
-  createReferenceGovernanceToolchainPolicy(),
+  REFERENCE_TOOLCHAIN_POLICY,
 );
 
 export function createGovernanceToolchainPolicy(

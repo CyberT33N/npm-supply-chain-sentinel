@@ -3,7 +3,7 @@
 `npm-supply-chain-sentinel` is a cross-platform Node.js security CLI for two related but independent workflows:
 
 1. a filesystem scanner that hunts for documented npm supply-chain compromise evidence across a repository or an entire host
-2. a PNPM governance scanner that audits managed Node.js / PNPM projects against a strict PNPM 11 Fortress policy
+2. a PNPM governance scanner that audits managed Node.js / PNPM projects against a strict PNPM Fortress policy
 
 The two modules are designed to work in both modes:
 
@@ -25,7 +25,7 @@ Requirements:
 
 - `pnpm install`
 - `rg` (`ripgrep`) on `PATH` for the filesystem scanner
-- network access is optional for governance version resolution; when unavailable, the scanner falls back to the checked-in reference Node and PNPM policy contracts, currently Node `26.2.0` and PNPM `11.2.2`
+- network access is optional for governance version resolution; when unavailable, the scanner falls back to the checked-in Node reference contract and the checked-in PNPM package-manager pin from the root `package.json`
 
 Run the two workflows from the repository root:
 
@@ -308,7 +308,7 @@ These same monorepo-only surfaces must be unset in a PNPM single-project reposit
 | `devEngines.packageManager.name` | Must be `pnpm`. |
 | `devEngines.packageManager.version` | Must be the same exact required PNPM version as `packageManager`. |
 | `devEngines.packageManager.onFail` | Must be `error`. |
-| `pnpm` | Must be unset in `package.json`; PNPM 11 policy must live in `pnpm-workspace.yaml`, not `package.json#pnpm`. |
+| `pnpm` | Must be unset in `package.json`; PNPM policy must live in `pnpm-workspace.yaml`, not `package.json#pnpm`. |
 | `name` | Warned when missing at a monorepo root. |
 
 #### Cross-file and runtime drift policies

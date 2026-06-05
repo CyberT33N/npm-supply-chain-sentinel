@@ -313,9 +313,9 @@ describe('auditPnpmGovernance', () => {
     const rootPath = await createFixtureProject();
     const toolchainPolicy = createGovernanceToolchainPolicy({
       pnpm: {
-        requiredVersion: '11.9.1',
-        requiredMajor: 11,
-        latestVersion: '11.9.1',
+        requiredVersion: '12.1.0',
+        requiredMajor: 12,
+        latestVersion: '12.1.0',
         minimumReleaseAgeMinutes: 10080,
         latestPublishedAt: '2026-05-12T08:00:00.000Z',
         requiredPublishedAt: '2026-05-12T08:00:00.000Z',
@@ -329,10 +329,10 @@ describe('auditPnpmGovernance', () => {
 
     const project = runAudit(rootPath, {
       pnpmRuntime: createPnpmRuntime({
-        version: '11.9.1',
-        major: 11,
-        requiredVersion: '11.9.1',
-        requiredMajor: 11,
+        version: '12.1.0',
+        major: 12,
+        requiredVersion: '12.1.0',
+        requiredMajor: 12,
         matchesRequiredVersion: true,
         matchesRequiredMajor: true,
         warning: null,
@@ -341,20 +341,20 @@ describe('auditPnpmGovernance', () => {
     });
 
     expect(getCheck(project, 'packageManager')?.status).toBe('invalid');
-    expect(getCheck(project, 'packageManager')?.expected).toBe('pnpm@11.9.1');
+    expect(getCheck(project, 'packageManager')?.expected).toBe('pnpm@12.1.0');
     expect(getCheck(project, 'devEngines.packageManager.version')?.status).toBe('invalid');
-    expect(getCheck(project, 'devEngines.packageManager.version')?.expected).toBe('11.9.1');
+    expect(getCheck(project, 'devEngines.packageManager.version')?.expected).toBe('12.1.0');
     expect(project.status).toBe('failed');
   });
 
   it('keeps the newest mature pnpm version as the required contract while latest is still blocked by minimumReleaseAge', async () => {
     const rootPath = await createFixtureProject({
       packageJson: createPackageJson({
-        packageManager: 'pnpm@11.3.0',
+        packageManager: 'pnpm@11.5.2',
         devEngines: {
           packageManager: {
             name: 'pnpm',
-            version: '11.3.0',
+            version: '11.5.2',
             onFail: 'error',
           },
         },
@@ -362,9 +362,9 @@ describe('auditPnpmGovernance', () => {
     });
     const pnpmPolicy = createGovernanceToolchainPolicy({
       pnpm: {
-        requiredVersion: '11.2.2',
+        requiredVersion: '11.5.0',
         requiredMajor: 11,
-        latestVersion: '11.3.0',
+        latestVersion: '11.5.2',
         minimumReleaseAgeMinutes: 10080,
         latestPublishedAt: '2026-05-24T08:43:45.834Z',
         requiredPublishedAt: '2026-05-19T08:43:45.834Z',
@@ -378,9 +378,9 @@ describe('auditPnpmGovernance', () => {
 
     const project = runAudit(rootPath, {
       pnpmRuntime: createPnpmRuntime({
-        version: '11.2.2',
+        version: '11.5.0',
         major: 11,
-        requiredVersion: '11.2.2',
+        requiredVersion: '11.5.0',
         requiredMajor: 11,
         matchesRequiredVersion: true,
         matchesRequiredMajor: true,
@@ -390,10 +390,10 @@ describe('auditPnpmGovernance', () => {
     });
 
     expect(getCheck(project, 'packageManager')?.status).toBe('invalid');
-    expect(getCheck(project, 'packageManager')?.message ?? '').toContain('official latest PNPM release 11.3.0');
+    expect(getCheck(project, 'packageManager')?.message ?? '').toContain('official latest PNPM release 11.5.2');
     expect(getCheck(project, 'packageManager')?.message ?? '').toContain('minimumReleaseAge cutoff 2026-05-20T09:34:35.333Z');
     expect(getCheck(project, 'devEngines.packageManager.version')?.status).toBe('invalid');
-    expect(getCheck(project, 'devEngines.packageManager.version')?.message ?? '').toContain('official latest PNPM release 11.3.0');
+    expect(getCheck(project, 'devEngines.packageManager.version')?.message ?? '').toContain('official latest PNPM release 11.5.2');
     expect(project.status).toBe('failed');
   });
 

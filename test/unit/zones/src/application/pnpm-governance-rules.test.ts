@@ -10,6 +10,7 @@ import {
 } from '../../../../../src/domain/pnpm-governance';
 import {
   BASE_WORKSPACE_TEXT,
+  PNPM_RUNTIME,
   buildMonorepoWorkspaceText,
   createFixtureProject,
   createPackageJson,
@@ -487,7 +488,7 @@ describe('pnpm governance rule matrix', () => {
         devEngines: {
           packageManager: {
             name: 'pnpm',
-            version: '^11.2.2',
+            version: `^${PNPM_RUNTIME.requiredVersion}`,
             onFail: 'error',
           },
         },

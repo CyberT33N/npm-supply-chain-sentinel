@@ -159,7 +159,7 @@ export async function main() {
   inspectWindowsRegistry(findings);
   logStageIfVerbose(stageLogger, args, 'registry-audit-complete', 'Finished inspecting platform-specific registry/runtime persistence');
 
-  logStageIfVerbose(stageLogger, args, 'pnpm-governance-started', 'Auditing managed project roots for PNPM 11 Fortress governance');
+  logStageIfVerbose(stageLogger, args, 'pnpm-governance-started', 'Auditing managed project roots for PNPM Fortress governance');
   const governanceAudit = auditPnpmGovernance(normalizedRoots, args, pnpmRuntime, toolchainPolicy);
   logStageIfVerbose(
     stageLogger,
@@ -317,7 +317,7 @@ Notes:
     10 seconds. Override with --heartbeat-sec.
   - The latest full scan JSON report is always written to ./generated/latest-scan.json.
   - ripgrep (rg) must be installed and available on PATH.
-  - Managed project roots are also audited for PNPM 11 Fortress governance outside package-manager-managed areas such as node_modules, .pnpm, .pnpm-store, .yarn, .bun, jspm_packages, and bower_components.
+  - Managed project roots are also audited for PNPM Fortress governance outside package-manager-managed areas such as node_modules, .pnpm, .pnpm-store, .yarn, .bun, jspm_packages, and bower_components.
   - Exact package/version hits are high confidence.
   - Heuristic hits look for the documented loader/payload/persistence patterns from the
     Axios incident and the Shai-Hulud / Mini-Shai-Hulud campaign family.

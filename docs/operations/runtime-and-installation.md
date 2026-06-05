@@ -5,10 +5,10 @@
 The scanner requires the following runtime dependencies:
 
 - Node.js `>=24.16.0`
-- `pnpm` `11.1.3` or newer within the required major
+- `pnpm` aligned with the exact root `package.json#packageManager` pin
 - `ripgrep` (`rg`) on `PATH`
 
-The repository itself is governed as a PNPM 11 Fortress single-project setup:
+The repository itself is governed as a PNPM Fortress single-project setup:
 
 - project policy lives in `pnpm-workspace.yaml`,
 - toolchain pinning lives in the root `package.json`,

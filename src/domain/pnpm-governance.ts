@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+
+import semver from 'semver';
+
 export interface NodeRuntimeContract {
   version: string;
   major: number;
@@ -46,8 +50,8 @@ export const CURRENT_NODE_LTS: NodeRuntimeContract = Object.freeze({
 });
 
 export const FORTRESS_MINIMUM_RELEASE_AGE_MINUTES = 10080;
-export const REQUIRED_PNPM_MAJOR = 11;
-export const REQUIRED_PNPM_VERSION = '11.2.2';
+export const REQUIRED_PNPM_VERSION = resolveCheckedInReferencePnpmVersion();
+export const REQUIRED_PNPM_MAJOR = semver.major(REQUIRED_PNPM_VERSION);
 export const OFFICIAL_NPM_REGISTRY_URL = 'https://registry.npmjs.org/';
 export const PNPM_WORKSPACE_BASENAME = 'pnpm-workspace.yaml';
 export const PNPM_LOCKFILE_BASENAME = 'pnpm-lock.yaml';
@@ -358,6 +362,68 @@ const GOVERNANCE_UNMANAGED_PATH_RULES = Object.freeze([
     pattern: /^\/opt\/.+\/resources\/app(?:\/|$)/u,
   },
 ]);
+
+function isGovernanceRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseCheckedInPackageManagerVersion(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const match = value.match(/^pnpm@(.+)$/u);
+  if (!match) {
+    return null;
+  }
+
+  const [, rawVersion] = match;
+  return typeof rawVersion === 'string' ? semver.valid(rawVersion) : null;
+}
+
+function parseCheckedInDevEnginePnpmVersion(value: unknown): string | null {
+  if (!isGovernanceRecord(value)) {
+    return null;
+  }
+
+  const packageManager = value['packageManager'];
+  if (!isGovernanceRecord(packageManager)) {
+    return null;
+  }
+
+  const name = packageManager['name'];
+  if (name !== undefined && name !== 'pnpm') {
+    return null;
+  }
+
+  const version = packageManager['version'];
+  return typeof version === 'string' ? semver.valid(version) : null;
+}
+
+function resolveCheckedInReferencePnpmVersion(): string {
+  const manifestText = readFileSync(new URL('../../package.json', import.meta.url), 'utf8');
+  const manifest: unknown = JSON.parse(manifestText);
+  if (!isGovernanceRecord(manifest)) {
+    throw new TypeError('The checked-in package.json must contain a JSON object.');
+  }
+
+  const packageManagerVersion = parseCheckedInPackageManagerVersion(manifest['packageManager']);
+  const devEngineVersion = parseCheckedInDevEnginePnpmVersion(manifest['devEngines']);
+  if (packageManagerVersion && devEngineVersion && packageManagerVersion !== devEngineVersion) {
+    throw new TypeError(
+      `The checked-in PNPM contract drifted: packageManager pins ${packageManagerVersion}, but devEngines.packageManager.version pins ${devEngineVersion}.`,
+    );
+  }
+
+  const referenceVersion = packageManagerVersion ?? devEngineVersion;
+  if (!referenceVersion) {
+    throw new TypeError(
+      'The checked-in package.json must pin pnpm exactly in packageManager or devEngines.packageManager.version.',
+    );
+  }
+
+  return referenceVersion;
+}
 
 export function isGovernanceDiscoveryExcludedDirName(dirName: string): boolean {
   return GOVERNANCE_DISCOVERY_EXCLUDED_DIR_NAMES.has(String(dirName).toLowerCase());

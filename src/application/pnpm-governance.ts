@@ -1099,7 +1099,7 @@ function auditRootPackageJson(
       file: PACKAGE_JSON_BASENAME,
       property: 'pnpm',
       status: 'invalid',
-      message: 'PNPM 11 no longer reads settings from package.json#pnpm. Move policy into pnpm-workspace.yaml.',
+      message: 'PNPM no longer reads settings from package.json#pnpm. Move policy into pnpm-workspace.yaml.',
     });
   } else {
     pushCheck(checks, {
@@ -1562,7 +1562,7 @@ function auditProjectAuthFiles(
           property: key,
           status: 'invalid',
           message: migrationMessage
-            ?? `${key} is not an allowed project-local PNPM auth or certificate property. In PNPM 11, keep project-local .npmrc limited to auth and certificate material; move repository policy to pnpm-workspace.yaml and machine-local infrastructure settings to the global PNPM config.yaml instead.`,
+            ?? `${key} is not an allowed project-local PNPM auth or certificate property. Keep project-local .npmrc limited to auth and certificate material; move repository policy to pnpm-workspace.yaml and machine-local infrastructure settings to the global PNPM config.yaml instead.`,
         });
         continue;
       }
@@ -1597,7 +1597,7 @@ function explainMisplacedProjectAuthSetting(rawKey: string): string | null {
 
   const normalizedKey = normalizeConfigKeyForLookup(rawKey);
   if (normalizedKey === normalizeConfigKeyForLookup('useNodeVersion')) {
-    return 'useNodeVersion must not live in a project-local .npmrc. PNPM 11 removed useNodeVersion from .npmrc-based governance. Model the exact runtime contract in package.json#devEngines.runtime.version and keep pnpm-workspace.yaml#nodeVersion aligned with it instead.';
+    return 'useNodeVersion must not live in a project-local .npmrc. PNPM removed useNodeVersion from .npmrc-based governance. Model the exact runtime contract in package.json#devEngines.runtime.version and keep pnpm-workspace.yaml#nodeVersion aligned with it instead.';
   }
 
   if (normalizedKey === normalizeConfigKeyForLookup('nodeVersion')) {
