@@ -226,6 +226,87 @@ describe('auditPnpmGovernance', () => {
     expect(getCheck(project, 'catalogs.ui exact versions')).toBeUndefined();
   });
 
+  it('accepts exact trustPolicyExclude entries while surfacing the response-order checklist as a warning', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: BASE_WORKSPACE_TEXT.replace(
+        /^trustPolicyExclude: \[\]$/mu,
+        'trustPolicyExclude:\n  - "chokidar@4.0.3"',
+      ),
+    });
+
+    const project = runAudit(rootPath);
+    const exactVersionsCheck = getCheck(project, 'trustPolicyExclude exact versions');
+    const responseOrderWarning = getCheck(project, 'trustPolicyExclude response order');
+
+    expect(project.status).toBe('failed');
+    expect(project.summary.warningCount).toBeGreaterThan(0);
+    expect(getCheck(project, 'trustPolicyExclude')?.status).toBe('invalid');
+    expect(exactVersionsCheck?.status).toBe('ok');
+    expect(exactVersionsCheck?.actual).toBe('1 exact exception');
+    expect(exactVersionsCheck?.message ?? '').toMatch(/one exact package version each/i);
+    expect(responseOrderWarning?.status).toBe('warning');
+    expect(responseOrderWarning?.message ?? '').toMatch(/ERR_PNPM_TRUST_DOWNGRADE/i);
+    expect(responseOrderWarning?.expected).toMatch(/patch-only/i);
+    expect(responseOrderWarning?.message ?? '').toMatch(/same major\/minor line/i);
+    expect(responseOrderWarning?.message ?? '').toMatch(/consumer contract/i);
+    expect(responseOrderWarning?.message ?? '').toMatch(/trustPolicyExclude is not architecturally correct/i);
+    expect(responseOrderWarning?.message ?? '').toMatch(/remove the exception/i);
+  });
+
+  it('rejects trustPolicyExclude entries that drift to latest instead of one exact reviewed version', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: BASE_WORKSPACE_TEXT.replace(
+        /^trustPolicyExclude: \[\]$/mu,
+        'trustPolicyExclude:\n  - "foo@latest"',
+      ),
+    });
+
+    const project = runAudit(rootPath);
+    const selectorCheck = project.checks.find((check) => check.property === 'trustPolicyExclude[0]');
+
+    expect(selectorCheck?.status).toBe('invalid');
+    expect(selectorCheck?.actual).toBe('foo@latest');
+    expect(selectorCheck?.message ?? '').toMatch(/exact package version/i);
+    expect(selectorCheck?.message ?? '').toMatch(/latest/i);
+    expect(getCheck(project, 'trustPolicyExclude exact versions')).toBeUndefined();
+  });
+
+  it('accepts overrides only when every target stays pinned to an exact semver version', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: BASE_WORKSPACE_TEXT.replace(
+        /^overrides: \{\}$/mu,
+        'overrides:\n  "react-dom@18.2.0>react": "18.1.0"',
+      ),
+    });
+
+    const project = runAudit(rootPath);
+    const exactVersionsCheck = getCheck(project, 'overrides exact versions');
+
+    expect(project.status).toBe('failed');
+    expect(getCheck(project, 'overrides')?.status).toBe('invalid');
+    expect(exactVersionsCheck?.status).toBe('ok');
+    expect(exactVersionsCheck?.actual).toBe('1 exact override target');
+    expect(exactVersionsCheck?.message ?? '').toMatch(/explicit exact semver versions only/i);
+  });
+
+  it('rejects overrides that target open semver ranges instead of one exact reviewed version', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: BASE_WORKSPACE_TEXT.replace(
+        /^overrides: \{\}$/mu,
+        'overrides:\n  "react-dom@18.2.0>react": "^18.1.0"',
+      ),
+    });
+
+    const project = runAudit(rootPath);
+    const rangeCheck = project.checks.find((check) => check.property === 'overrides.react-dom@18.2.0>react');
+
+    expect(rangeCheck?.status).toBe('invalid');
+    expect(rangeCheck?.actual).toBe('^18.1.0');
+    expect(rangeCheck?.message ?? '').toMatch(/exact semver version only/i);
+    expect(rangeCheck?.message ?? '').toMatch(/open ranges/i);
+    expect(getCheck(project, 'overrides exact versions')).toBeUndefined();
+  });
+
   it('audits workspace member package dependencies against the shared catalog', async () => {
     const rootPath = await createFixtureProject({
       workspaceText: buildMonorepoWorkspaceText(BASE_WORKSPACE_TEXT),

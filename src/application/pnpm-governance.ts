@@ -1014,6 +1014,9 @@ function auditWorkspaceFile(
   for (const property of SHARED_WORKSPACE_EMPTY_OBJECT_RULES) {
     auditEmptyObject(checks, workspace, PNPM_WORKSPACE_BASENAME, property);
   }
+  auditTrustPolicyExcludeExactVersionSelectors(checks, workspace);
+  auditTrustPolicyExcludeResponseOrderWarning(checks, workspace);
+  auditOverridesExactVersionTargets(checks, workspace);
   for (const property of SHARED_WORKSPACE_OBJECT_RULES) {
     auditObjectSurface(checks, workspace, PNPM_WORKSPACE_BASENAME, property);
   }
@@ -2775,6 +2778,103 @@ function auditCatalogVersionMap(
   });
 }
 
+function auditTrustPolicyExcludeExactVersionSelectors(
+  checks: GovernanceCheck[],
+  workspace: Record<string, unknown>,
+): void {
+  const actual = getNestedValue(workspace, 'trustPolicyExclude');
+  if (!Array.isArray(actual) || actual.length === 0) {
+    return;
+  }
+
+  let invalidEntryCount = 0;
+  for (const [index, selector] of actual.entries()) {
+    if (isExactPackageVersionSelector(selector)) {
+      continue;
+    }
+
+    invalidEntryCount += 1;
+    pushCheck(checks, {
+      file: PNPM_WORKSPACE_BASENAME,
+      property: `trustPolicyExclude[${index}]`,
+      status: 'invalid',
+      expected: 'exact package version selector like chokidar@4.0.3',
+      actual: formatValue(selector),
+      message: 'trustPolicyExclude entries must name one explicit exact package version only. Package-wide exclusions, latest, open ranges, wildcards, and logical OR selectors are architecturally forbidden on this break-glass trust-waiver surface; scope the exception to exactly one reviewed blocked version.',
+    });
+  }
+
+  if (invalidEntryCount > 0) {
+    return;
+  }
+
+  pushCheck(checks, {
+    file: PNPM_WORKSPACE_BASENAME,
+    property: 'trustPolicyExclude exact versions',
+    status: 'ok',
+    expected: 'exact package version selectors only',
+    actual: actual.length === 1 ? '1 exact exception' : `${actual.length} exact exceptions`,
+    message: 'trustPolicyExclude entries are present and pinned to one exact package version each.',
+  });
+}
+
+function auditTrustPolicyExcludeResponseOrderWarning(
+  checks: GovernanceCheck[],
+  workspace: Record<string, unknown>,
+): void {
+  const actual = getNestedValue(workspace, 'trustPolicyExclude');
+  if (!Array.isArray(actual) || actual.length === 0) {
+    return;
+  }
+
+  pushCheck(checks, {
+    file: PNPM_WORKSPACE_BASENAME,
+    property: 'trustPolicyExclude response order',
+    status: 'warning',
+    expected: 'patch-only, compatibility-gated override-first trust-downgrade response order',
+    actual: actual.length === 1 ? '1 configured trust waiver' : `${actual.length} configured trust waivers`,
+    message: 'trustPolicyExclude is a break-glass surface. Checklist: confirm this is ERR_PNPM_TRUST_DOWNGRADE rather than a release-age, registry-time, or build-script incident; keep the direct dependency pinned exactly in its normal declaration surface; derive override candidates from the concrete consumer contract and restrict them to trust-compliant exact patch versions within the same major/minor line; verify contract fit, compatibility, evidence, real consumer behavior, and exception ownership before writing any override; if a clean exact patch override survives those gates, trustPolicyExclude is not architecturally correct and root overrides should have been used first; only keep trustPolicyExclude for the exact blocked version when no supplier-conformant exact patch override remains; remove the exception once upstream is policy-compliant again.',
+  });
+}
+
+function auditOverridesExactVersionTargets(
+  checks: GovernanceCheck[],
+  workspace: Record<string, unknown>,
+): void {
+  const actual = getNestedValue(workspace, 'overrides');
+  if (!isPlainObject(actual) || Object.keys(actual).length === 0) {
+    return;
+  }
+
+  const entries = Object.entries(actual).sort(([leftSelector], [rightSelector]) =>
+    leftSelector.localeCompare(rightSelector),
+  );
+  const invalidEntries = entries.filter(([, selectorTarget]) => !isCanonicalExactSemverString(selectorTarget));
+
+  if (invalidEntries.length > 0) {
+    for (const [selector, selectorTarget] of invalidEntries) {
+      pushCheck(checks, {
+        file: PNPM_WORKSPACE_BASENAME,
+        property: `overrides.${selector}`,
+        status: 'invalid',
+        expected: 'exact semver like 1.2.3',
+        actual: formatValue(selectorTarget),
+        message: `overrides.${selector} must point to one explicit exact semver version only. latest, open ranges, wildcards, logical OR selectors, and protocol indirection are architecturally forbidden on this trust-downgrade repair surface; pin the reviewed override target to one exact version.`,
+      });
+    }
+    return;
+  }
+
+  pushCheck(checks, {
+    file: PNPM_WORKSPACE_BASENAME,
+    property: 'overrides exact versions',
+    status: 'ok',
+    expected: 'exact semver override targets only',
+    actual: entries.length === 1 ? '1 exact override target' : `${entries.length} exact override targets`,
+    message: 'overrides values are present and pinned to explicit exact semver versions only.',
+  });
+}
+
 function pushEqualityCheck(
   checks: GovernanceCheck[],
   object: Record<string, unknown>,
@@ -2955,6 +3055,34 @@ function isCanonicalExactSemverString(value: unknown): boolean {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 && semver.valid(trimmed) === trimmed;
+}
+
+function isExactPackageVersionSelector(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  const versionSeparatorIndex = trimmed.lastIndexOf('@');
+  if (versionSeparatorIndex <= 0 || versionSeparatorIndex === trimmed.length - 1) {
+    return false;
+  }
+
+  const packageName = trimmed.slice(0, versionSeparatorIndex);
+  const version = trimmed.slice(versionSeparatorIndex + 1);
+
+  return isCanonicalPackageSelectorName(packageName) && isCanonicalExactSemverString(version);
+}
+
+function isCanonicalPackageSelectorName(value: string): boolean {
+  if (value.startsWith('@')) {
+    return /^@[^/\s]+\/[^@\s/]+$/u.test(value);
+  }
+  return /^[^@\s/][^@\s/]*$/u.test(value);
 }
 
 function getFortressExceptionSurfaceViolationMessage(

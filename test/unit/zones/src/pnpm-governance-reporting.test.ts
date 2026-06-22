@@ -198,7 +198,7 @@ describe('renderPnpmGovernanceAudit', () => {
     const rootPath = await createFixtureProject({
       workspaceText: BASE_WORKSPACE_TEXT.replace(
         /^trustPolicyExclude: \[\]$/mu,
-        'trustPolicyExclude:\n  - legacy-mirror',
+        'trustPolicyExclude:\n  - "legacy-mirror@1.2.3"',
       ),
     });
 
@@ -215,9 +215,16 @@ describe('renderPnpmGovernanceAudit', () => {
     }));
 
     expect(output).toContain(`  ${ANSI_COLORS.red}Failed checks:${ANSI_COLORS.reset}`);
+    expect(output).toContain(`  ${ANSI_COLORS.yellow}Warning checks:${ANSI_COLORS.reset}`);
     expect(output).toContain(
       `    ${ANSI_COLORS.yellow}${STATUS_WARN_SYMBOL}${ANSI_COLORS.reset} ${ANSI_COLORS.yellow}trustPolicyExclude:`,
     );
+    expect(output).toContain(
+      `    ${ANSI_COLORS.yellow}${STATUS_WARN_SYMBOL}${ANSI_COLORS.reset} ${ANSI_COLORS.yellow}trustPolicyExclude response order:`,
+    );
+    expect(output).toContain('Checklist: confirm this is ERR_PNPM_TRUST_DOWNGRADE');
+    expect(output).toContain('same major/minor line');
+    expect(output).toContain('trustPolicyExclude is not architecturally correct');
   });
 
   it('renders node latest recommendations in a dedicated yellow warning section', async () => {
