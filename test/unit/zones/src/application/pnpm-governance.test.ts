@@ -281,12 +281,72 @@ describe('auditPnpmGovernance', () => {
 
     const project = runAudit(rootPath);
     const exactVersionsCheck = getCheck(project, 'overrides exact versions');
+    const narrowSelectorsCheck = getCheck(project, 'overrides narrow selectors');
 
     expect(project.status).toBe('failed');
     expect(getCheck(project, 'overrides')?.status).toBe('invalid');
+    expect(narrowSelectorsCheck?.status).toBe('ok');
+    expect(narrowSelectorsCheck?.actual).toBe('1 narrow override selector');
+    expect(narrowSelectorsCheck?.message ?? '').toMatch(/exact parent-edge graph repairs only/i);
     expect(exactVersionsCheck?.status).toBe('ok');
     expect(exactVersionsCheck?.actual).toBe('1 exact override target');
     expect(exactVersionsCheck?.message ?? '').toMatch(/explicit exact semver versions only/i);
+  });
+
+  it('rejects package-wide override selectors because they are too broad for root graph repair', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: BASE_WORKSPACE_TEXT.replace(
+        /^overrides: \{\}$/mu,
+        'overrides:\n  react: "18.1.0"',
+      ),
+    });
+
+    const project = runAudit(rootPath);
+    const selectorCheck = getCheck(project, 'overrides selector.react');
+
+    expect(selectorCheck?.status).toBe('invalid');
+    expect(selectorCheck?.expected).toBe('exact parent-edge selector like react-dom@18.2.0>react');
+    expect(selectorCheck?.actual).toBe('react');
+    expect(selectorCheck?.message ?? '').toMatch(/must use the full exact parent-edge form parent@exactVersion>child/i);
+    expect(selectorCheck?.message ?? '').toMatch(/does not identify exactly one reviewed parent dependency edge/i);
+    expect(selectorCheck?.message ?? '').toMatch(/future or unrelated consumers/i);
+    expect(selectorCheck?.message ?? '').toMatch(/Importance: high/i);
+    expect(getCheck(project, 'overrides narrow selectors')).toBeUndefined();
+  });
+
+  it('rejects partial-parent override selectors because they drift across parent version changes', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: BASE_WORKSPACE_TEXT.replace(
+        /^overrides: \{\}$/mu,
+        'overrides:\n  "react-dom>react": "18.1.0"',
+      ),
+    });
+
+    const project = runAudit(rootPath);
+    const selectorCheck = getCheck(project, 'overrides selector.react-dom>react');
+
+    expect(selectorCheck?.status).toBe('invalid');
+    expect(selectorCheck?.actual).toBe('react-dom>react');
+    expect(selectorCheck?.message ?? '').toMatch(/parent consumer is not pinned to one exact version/i);
+    expect(selectorCheck?.message ?? '').toMatch(/future parent drift could silently inherit the rewrite/i);
+    expect(getCheck(project, 'overrides narrow selectors')).toBeUndefined();
+  });
+
+  it('rejects ranged parent override selectors because they are not one reviewed exact parent edge', async () => {
+    const rootPath = await createFixtureProject({
+      workspaceText: BASE_WORKSPACE_TEXT.replace(
+        /^overrides: \{\}$/mu,
+        'overrides:\n  "react-dom@^18.2.0>react": "18.1.0"',
+      ),
+    });
+
+    const project = runAudit(rootPath);
+    const selectorCheck = getCheck(project, 'overrides selector.react-dom@^18.2.0>react');
+
+    expect(selectorCheck?.status).toBe('invalid');
+    expect(selectorCheck?.actual).toBe('react-dom@^18.2.0>react');
+    expect(selectorCheck?.message ?? '').toMatch(/parent consumer is not pinned to one exact version/i);
+    expect(selectorCheck?.message ?? '').toMatch(/root control-plane technical debt/i);
   });
 
   it('rejects overrides that target open semver ranges instead of one exact reviewed version', async () => {
@@ -304,6 +364,7 @@ describe('auditPnpmGovernance', () => {
     expect(rangeCheck?.actual).toBe('^18.1.0');
     expect(rangeCheck?.message ?? '').toMatch(/exact semver version only/i);
     expect(rangeCheck?.message ?? '').toMatch(/open ranges/i);
+    expect(rangeCheck?.message ?? '').toMatch(/Importance: high/i);
     expect(getCheck(project, 'overrides exact versions')).toBeUndefined();
   });
 

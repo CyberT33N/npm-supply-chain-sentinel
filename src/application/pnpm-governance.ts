@@ -1016,6 +1016,7 @@ function auditWorkspaceFile(
   }
   auditTrustPolicyExcludeExactVersionSelectors(checks, workspace);
   auditTrustPolicyExcludeResponseOrderWarning(checks, workspace);
+  auditOverridesNarrowSelectors(checks, workspace);
   auditOverridesExactVersionTargets(checks, workspace);
   for (const property of SHARED_WORKSPACE_OBJECT_RULES) {
     auditObjectSurface(checks, workspace, PNPM_WORKSPACE_BASENAME, property);
@@ -2837,6 +2838,51 @@ function auditTrustPolicyExcludeResponseOrderWarning(
   });
 }
 
+function auditOverridesNarrowSelectors(
+  checks: GovernanceCheck[],
+  workspace: Record<string, unknown>,
+): void {
+  const actual = getNestedValue(workspace, 'overrides');
+  if (!isPlainObject(actual) || Object.keys(actual).length === 0) {
+    return;
+  }
+
+  const entries = Object.entries(actual).sort(([leftSelector], [rightSelector]) =>
+    leftSelector.localeCompare(rightSelector),
+  );
+
+  let invalidEntryCount = 0;
+  for (const [selector] of entries) {
+    const broadReason = explainBroadOverrideSelector(selector);
+    if (!broadReason) {
+      continue;
+    }
+
+    invalidEntryCount += 1;
+    pushCheck(checks, {
+      file: PNPM_WORKSPACE_BASENAME,
+      property: `overrides selector.${selector}`,
+      status: 'invalid',
+      expected: 'exact parent-edge selector like react-dom@18.2.0>react',
+      actual: formatValue(selector),
+      message: `overrides.${selector} must use the full exact parent-edge form parent@exactVersion>child. Why: ${broadReason}. Problem: broad root overrides can silently capture future or unrelated consumers, widen rollback scope, and hide the exact repaired incident edge during forensics. Importance: high, because this creates repository-wide root control-plane technical debt.`,
+    });
+  }
+
+  if (invalidEntryCount > 0) {
+    return;
+  }
+
+  pushCheck(checks, {
+    file: PNPM_WORKSPACE_BASENAME,
+    property: 'overrides narrow selectors',
+    status: 'ok',
+    expected: 'exact parent-edge selectors only',
+    actual: entries.length === 1 ? '1 narrow override selector' : `${entries.length} narrow override selectors`,
+    message: 'overrides entries are scoped to exact parent-edge graph repairs only.',
+  });
+}
+
 function auditOverridesExactVersionTargets(
   checks: GovernanceCheck[],
   workspace: Record<string, unknown>,
@@ -2859,7 +2905,7 @@ function auditOverridesExactVersionTargets(
         status: 'invalid',
         expected: 'exact semver like 1.2.3',
         actual: formatValue(selectorTarget),
-        message: `overrides.${selector} must point to one explicit exact semver version only. latest, open ranges, wildcards, logical OR selectors, and protocol indirection are architecturally forbidden on this trust-downgrade repair surface; pin the reviewed override target to one exact version.`,
+        message: `overrides.${selector} must point to one explicit exact semver version only. Why: non-exact targets are too broad for a reviewed root graph-repair surface. Problem: latest, open ranges, wildcards, logical OR selectors, protocol indirection, or removal-style targets can drift resolution semantics, widen blast radius, and make rollback or forensics ambiguous. Importance: high, because root overrides must stay auditable and incident-scoped.`,
       });
     }
     return;
@@ -3076,6 +3122,40 @@ function isExactPackageVersionSelector(value: unknown): boolean {
   const version = trimmed.slice(versionSeparatorIndex + 1);
 
   return isCanonicalPackageSelectorName(packageName) && isCanonicalExactSemverString(version);
+}
+
+function explainBroadOverrideSelector(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return 'the selector is not a string and therefore cannot identify one exact parent edge';
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return 'the selector is empty and therefore cannot identify one exact parent edge';
+  }
+
+  const firstEdgeSeparatorIndex = trimmed.indexOf('>');
+  const lastEdgeSeparatorIndex = trimmed.lastIndexOf('>');
+  if (
+    firstEdgeSeparatorIndex <= 0
+    || firstEdgeSeparatorIndex !== lastEdgeSeparatorIndex
+    || firstEdgeSeparatorIndex === trimmed.length - 1
+  ) {
+    return 'it does not identify exactly one reviewed parent dependency edge';
+  }
+
+  const parentSelector = trimmed.slice(0, firstEdgeSeparatorIndex).trim();
+  const childSelector = trimmed.slice(firstEdgeSeparatorIndex + 1).trim();
+
+  if (!isExactPackageVersionSelector(parentSelector)) {
+    return 'the parent consumer is not pinned to one exact version, so future parent drift could silently inherit the rewrite';
+  }
+
+  if (!isCanonicalPackageSelectorName(childSelector)) {
+    return 'the child dependency is not named as one canonical package selector';
+  }
+
+  return null;
 }
 
 function isCanonicalPackageSelectorName(value: string): boolean {
